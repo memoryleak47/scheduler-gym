@@ -4,6 +4,6 @@ for scheduler in $(ls schedulers)
 do
     for c in $(ls case-studies)
     do
-        (cd $c; ./run.sh $scheduler)
+        (cd case-studies/$c; ./run.sh ../../schedulers/$scheduler)
     done
 done
