@@ -1,0 +1,3 @@
+[submodule "case-studies/szalinski"]
+	path = case-studies/szalinski
+	url = git@github.com:memoryleak47/szalinski.git
