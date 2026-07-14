@@ -4,3 +4,6 @@
 [submodule "case-studies/trig"]
 	path = case-studies/trig
 	url = git@github.com:memoryleak47/schedstudy-trig-benchmark.git
+[submodule "case-studies/lean-egg"]
+	path = case-studies/lean-egg
+	url = git@github.com:memoryleak47/lean-egg.git
