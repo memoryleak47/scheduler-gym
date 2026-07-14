@@ -1,3 +1,6 @@
 [submodule "case-studies/szalinski"]
 	path = case-studies/szalinski
 	url = git@github.com:memoryleak47/szalinski.git
+[submodule "case-studies/trig"]
+	path = case-studies/trig
+	url = git@github.com:memoryleak47/schedstudy-trig-benchmark.git
