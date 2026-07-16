@@ -1,6 +1,3 @@
-[submodule "case-studies/szalinski"]
-	path = case-studies/szalinski
-	url = git@github.com:memoryleak47/szalinski.git
 [submodule "case-studies/lean-egg"]
 	path = case-studies/lean-egg
 	url = git@github.com:memoryleak47/lean-egg.git
