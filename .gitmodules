@@ -7,3 +7,6 @@
 [submodule "case-studies/herbie"]
 	path = case-studies/herbie
 	url = git@github.com:memoryleak47/herbie.git
+[submodule "case-studies/trig"]
+	path = case-studies/trig
+	url = git@github.com:memoryleak47/trig-benchmark.git
