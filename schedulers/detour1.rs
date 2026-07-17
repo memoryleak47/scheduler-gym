@@ -1,20 +1,6 @@
 use egg::{Id, EGraph, Language, Extractor, FromOp, RecExpr, Rewrite, Subst, ENodeOrVar, PatternAst, CostFunction, Analysis, Runner, Report, StopReason, BackoffScheduler, SimpleScheduler, RewriteScheduler, SearchMatches, Iteration, IterationData};
 
-use std::time::{Duration, Instant};
-
-type RewriteId = usize;
-type Cost = u128;
-
-pub struct Limits {
-    pub node_limit: usize,
-    pub time_limit: Duration,
-}
-
-pub struct CostConfig<L> {
-    pub cf: fn(&L) -> Cost,
-    pub offset: Cost,
-    pub unreachable_cost: Cost,
-}
+use std::time::Instant;
 
 #[allow(unused)]
 pub fn run<L: Language, N: Analysis<L> + Default, IterData: IterationData<L, N>>(runner: Runner<L, N, IterData>, rws: &[Rewrite<L, N>], limits: Limits, cfg: CostConfig<L>) -> Runner<L, N, IterData> {
@@ -117,7 +103,7 @@ fn pat_detour_eqsat_step<'a, L: Language, N: Analysis<L>, IterData: IterationDat
     let ex = Extractor::new(&ctxt.runner.egraph, AdditiveCostFn(ctxt.cfg.cf));
     let ctxt_cost = compute_ctxt_costs(&ex, ctxt);
 
-    let mut matches: BTreeMap</*detour cost*/ Cost, Vec<(RewriteId, Id, Subst)>> = BTreeMap::default();
+    let mut matches: BTreeMap</*detour cost*/ Cost, Vec<(usize, Id, Subst)>> = BTreeMap::default();
 
     for (rw_i, rw) in ctxt.rws.iter().enumerate() {
         let lhs_pat = rw.searcher.get_pattern_ast().unwrap();
@@ -255,18 +241,6 @@ impl<U: Ord, T: Eq> PartialOrd for WithOrdRev<U, T> {
 impl<U: Ord, T: Eq> Ord for WithOrdRev<U, T> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.partial_cmp(&other).unwrap()
-    }
-}
-
-// === AdditiveCostFn ===
-
-struct AdditiveCostFn<L: Language>(fn(&L) -> Cost);
-
-impl<L: Language> CostFunction<L> for AdditiveCostFn<L> {
-    type Cost = Cost;
-
-    fn cost<C>(&mut self, enode: &L, costs: C) -> Self::Cost where C: FnMut(Id) -> Self::Cost {
-        enode.children().iter().copied().map(costs).fold(self.0(enode), |x, y| x+y)
     }
 }
 

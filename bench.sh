@@ -18,7 +18,12 @@ do
         sleep 0.2
 
         rm -f case-studies/$c/entries.txt
-        (cd case-studies/$c; ./run.sh ../../schedulers/$scheduler)
+        rm -f scheduler.rs
+
+        cp schedulers/$scheduler scheduler.rs
+        cat gym-common.rs >> scheduler.rs
+
+        (cd case-studies/$c; ./run.sh ../../scheduler.rs)
 
         echo "-------------------------"
         echo "case study '$c' reached a score of:"
