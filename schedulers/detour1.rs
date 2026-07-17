@@ -303,5 +303,6 @@ fn dump_iteration<'a, L: Language, N: Analysis<L> + Default, IterData: Iteration
     let total_size = ctxt.runner.egraph.total_size();
     let time = ctxt.start.elapsed().as_secs_f64();
     let it = ctxt.runner.iterations.len();
-    println!("#ENTRY: costs={costs:?}, total_size={total_size}, time={time}, iteration={it}");
+    let stop = &ctxt.runner.stop_reason;
+    println!("#ENTRY: costs={costs:?}, total_size={total_size}, time={time}, iteration={it}, stop={stop:?}");
 }
