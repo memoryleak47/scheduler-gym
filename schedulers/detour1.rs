@@ -304,5 +304,14 @@ fn dump_iteration<'a, L: Language, N: Analysis<L> + Default, IterData: Iteration
     let time = ctxt.start.elapsed().as_secs_f64();
     let it = ctxt.runner.iterations.len();
     let stop = &ctxt.runner.stop_reason;
-    println!("#ENTRY: costs={costs:?}, total_size={total_size}, time={time}, iteration={it}, stop={stop:?}");
+
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("entries.txt")
+        .unwrap();
+    writeln!(file, "#ENTRY: costs={costs:?}, total_size={total_size}, time={time}, iteration={it}, stop={stop:?}").unwrap();
 }
