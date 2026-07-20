@@ -42,15 +42,15 @@ fn mk_iteration<'a, L: Language, N: Analysis<L> + Default, IterData: IterationDa
     let mut it = mock_runner.iterations.pop().unwrap();
     ctxt.runner.egraph = mock_runner.egraph;
 
-    it.egraph_nodes = it.egraph_nodes; // set correctly by mock runner
-    it.egraph_classes = it.egraph_classes; // set correctly by mock runner
+    // it.egraph_nodes is set correctly by mock runner
+    // it.egraph_classes is  set correctly by mock runner
     it.applied = Default::default(); // set to default
     it.hook_time = 0.0; // set to default
     it.search_time = 0.0; // set to default
     it.apply_time = 0.0; // set to default
     it.rebuild_time = 0.0; // set to default
     it.total_time = it_start.elapsed().as_secs_f64(); // Note that this iteration counting counts *everything* in an iteration. This is different from egg, which excludes hooks etc.
-    it.data = it.data; // set correctly by mock runner
+    // it.data is set correctly by mock runner
     it.n_rebuilds = 0; // set to default
     it.stop_reason = stop_reason.clone();
 
