@@ -1,5 +1,6 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use egg::*;
+
 
 pub type Cost = u128;
 
@@ -98,4 +99,45 @@ fn call_hooks<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
     res
 }
 
+#[allow(unused)]
+pub fn run<L: Language, N: Analysis<L> + Default, IterData: IterationData<L, N>>(runner: Runner<L, N, IterData>, rws: &[Rewrite<L, N>], limits: Limits, cfg: CostConfig<L>) -> Runner<L, N, IterData> {
+    let mut ctxt = Ctxt {
+        runner,
+        rws,
+        limits,
+        cfg,
+
+        start: Instant::now(),
+    };
+    let mut state = sched_init();
+
+    // The initial e-graph might be dirty.
+    ctxt.runner.egraph.rebuild();
+
+    while ctxt.runner.stop_reason.is_none() {
+        let mut body = || {
+            ctxt.check_limits()?;
+
+            call_hooks(&mut ctxt)?;
+
+            ctxt.check_limits()?;
+
+            sched_iter(&mut ctxt, &mut state)?;
+
+            ctxt.check_limits()?;
+
+            Ok(())
+        };
+
+        let it_start = Instant::now();
+        let result = body();
+
+        let it = mk_iteration(&mut ctxt, result.err(), it_start);
+        ctxt.runner.iterations.push(it);
+
+        dump_iteration(&ctxt);
+    }
+
+    ctxt.runner
+}
 

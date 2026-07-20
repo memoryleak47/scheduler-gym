@@ -1,50 +1,8 @@
-use egg::{Id, EGraph, Language, Extractor, FromOp, RecExpr, Rewrite, Subst, ENodeOrVar, PatternAst, CostFunction, Analysis, Runner, Report, StopReason, BackoffScheduler, SimpleScheduler, RewriteScheduler, SearchMatches, Iteration, IterationData};
-
-use std::time::Instant;
-
-#[allow(unused)]
-pub fn run<L: Language, N: Analysis<L> + Default, IterData: IterationData<L, N>>(runner: Runner<L, N, IterData>, rws: &[Rewrite<L, N>], limits: Limits, cfg: CostConfig<L>) -> Runner<L, N, IterData> {
-    let mut ctxt = Ctxt {
-        runner,
-        rws,
-        limits,
-        cfg,
-
-        start: Instant::now(),
-    };
-    let mut sched = BackoffScheduler::default();
-
-    // The initial e-graph might be dirty.
-    ctxt.runner.egraph.rebuild();
-
-    while ctxt.runner.stop_reason.is_none() {
-        let mut body = || {
-            ctxt.check_limits()?;
-
-            call_hooks(&mut ctxt)?;
-
-            ctxt.check_limits()?;
-
-            detour_step(&mut ctxt, &mut sched)?;
-
-            ctxt.check_limits()?;
-
-            Ok(())
-        };
-
-        let it_start = Instant::now();
-        let result = body();
-
-        let it = mk_iteration(&mut ctxt, result.err(), it_start);
-        ctxt.runner.iterations.push(it);
-
-        dump_iteration(&ctxt);
-    }
-
-    ctxt.runner
+fn sched_init() -> BackoffScheduler {
+    BackoffScheduler::default()
 }
 
-fn detour_step<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ctxt: &mut Ctxt<'a, L, N, IterData>, sched: &mut BackoffScheduler) -> Result<(), StopReason> {
+fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ctxt: &mut Ctxt<'a, L, N, IterData>, sched: &mut BackoffScheduler) -> Result<(), StopReason> {
     let i = ctxt.runner.iterations.len();
     if i % 2 == 1 {
         let mut matches = Vec::new();
