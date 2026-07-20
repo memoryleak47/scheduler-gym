@@ -13,7 +13,7 @@ do
 
     for c in $(ls case-studies)
     do
-        if [[ "$c" == "herbie" || "$c" == "lean-egg" ]]; then
+        if [[ "$c" == "herbie" ]]; then
             echo "Ignoring case study '$c' for now"
             continue
         fi
