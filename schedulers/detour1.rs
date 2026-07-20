@@ -10,9 +10,9 @@ pub fn run<L: Language, N: Analysis<L> + Default, IterData: IterationData<L, N>>
         limits,
         cfg,
 
-        sched: BackoffScheduler::default(),
         start: Instant::now(),
     };
+    let mut sched = BackoffScheduler::default();
 
     // The initial e-graph might be dirty.
     ctxt.runner.egraph.rebuild();
@@ -25,7 +25,7 @@ pub fn run<L: Language, N: Analysis<L> + Default, IterData: IterationData<L, N>>
 
             ctxt.check_limits()?;
 
-            detour_step(&mut ctxt)?;
+            detour_step(&mut ctxt, &mut sched)?;
 
             ctxt.check_limits()?;
 
@@ -49,7 +49,6 @@ struct Ctxt<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>> {
     rws: &'a [Rewrite<L, N>],
     limits: Limits,
     cfg: CostConfig<L>,
-    sched: BackoffScheduler,
 
     start: Instant,
 }
@@ -73,7 +72,7 @@ fn call_hooks<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
     res
 }
 
-fn detour_step<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ctxt: &mut Ctxt<'a, L, N, IterData>) -> Result<(), StopReason> {
+fn detour_step<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ctxt: &mut Ctxt<'a, L, N, IterData>, sched: &mut BackoffScheduler) -> Result<(), StopReason> {
     let i = ctxt.runner.iterations.len();
     if i % 2 == 1 {
         let mut matches = Vec::new();
@@ -96,10 +95,10 @@ fn detour_step<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(c
         return Ok(());
     }
 
-    pat_detour_eqsat_step(ctxt)
+    pat_detour_eqsat_step(ctxt, sched)
 }
 
-fn pat_detour_eqsat_step<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ctxt: &mut Ctxt<'a, L, N, IterData>) -> Result<(), StopReason> {
+fn pat_detour_eqsat_step<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ctxt: &mut Ctxt<'a, L, N, IterData>, sched: &mut BackoffScheduler) -> Result<(), StopReason> {
     let ex = Extractor::new(&ctxt.runner.egraph, AdditiveCostFn(ctxt.cfg.cf));
     let ctxt_cost = compute_ctxt_costs(&ex, ctxt);
 
@@ -108,7 +107,7 @@ fn pat_detour_eqsat_step<'a, L: Language, N: Analysis<L>, IterData: IterationDat
     for (rw_i, rw) in ctxt.rws.iter().enumerate() {
         let lhs_pat = rw.searcher.get_pattern_ast().unwrap();
 
-        for m in ctxt.sched.search_rewrite(ctxt.runner.iterations.len(), &ctxt.runner.egraph, rw) {
+        for m in sched.search_rewrite(ctxt.runner.iterations.len(), &ctxt.runner.egraph, rw) {
             ctxt.check_limits()?;
 
             let lhs = m.eclass;
