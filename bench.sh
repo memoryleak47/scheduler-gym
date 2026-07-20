@@ -22,17 +22,17 @@ do
         echo "CASE STUDY: $c"
         sleep 0.2
 
-        rm -f case-studies/$c/entries.txt
-        rm -f scheduler.rs
+        rm -f /tmp/entries.txt
+        rm -f /tmp/scheduler.rs
 
-        cp schedulers/$scheduler scheduler.rs
-        cat gym-common.rs >> scheduler.rs
+        cp schedulers/$scheduler /tmp/scheduler.rs
+        cat gym-common.rs >> /tmp/scheduler.rs
 
-        (cd case-studies/$c; ./run.sh ../../scheduler.rs)
+        (cd case-studies/$c; ./run.sh /tmp/scheduler.rs)
 
         echo "-------------------------"
         echo "case study '$c' reached a cost of:"
-        cost case-studies/$c/entries.txt | tee "benchdata/$scheduler/$c.cost"
-        mv case-studies/$c/entries.txt "benchdata/$scheduler/$c.entries"
+        cost /tmp/entries.txt | tee "benchdata/$scheduler/$c.cost"
+        mv /tmp/entries.txt "benchdata/$scheduler/$c.entries"
     done
 done

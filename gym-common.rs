@@ -75,7 +75,7 @@ fn dump_iteration<'a, L: Language, N: Analysis<L> + Default, IterData: Iteration
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open("entries.txt")
+        .open("/tmp/entries.txt")
         .unwrap();
     writeln!(file, "#ENTRY: costs={costs:?}, total_size={total_size}, time={time}, iteration={it}, stop={stop:?}").unwrap();
 }
