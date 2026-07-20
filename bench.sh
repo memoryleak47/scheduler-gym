@@ -1,6 +1,6 @@
 #!/bin/bash
 
-function score() {
+function cost() {
     cat $1 | grep "stop=Some(" | cut -d "[" -F 2 | cut -d "]" -F 1 | awk '{sum+=$1} END {print sum}'
 }
 
@@ -31,8 +31,8 @@ do
         (cd case-studies/$c; ./run.sh ../../scheduler.rs)
 
         echo "-------------------------"
-        echo "case study '$c' reached a score of:"
-        score case-studies/$c/entries.txt | tee "benchdata/$scheduler/$c.score"
+        echo "case study '$c' reached a cost of:"
+        cost case-studies/$c/entries.txt | tee "benchdata/$scheduler/$c.cost"
         mv case-studies/$c/entries.txt "benchdata/$scheduler/$c.entries"
     done
 done
