@@ -18,7 +18,7 @@ do
 
     [ ! -e "benchdata/$s" ] && mkdir "benchdata/$s"
 
-    for c in $(ls case-studies)
+    for c in $(ls case-studies | sort -r)
     do
         if [[ "$IGNORED_CASE_STUDIES" =~ "$c" ]]; then
             echo "Ignoring case study '$c' for now"
