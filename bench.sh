@@ -5,7 +5,7 @@ function cost() {
 }
 
 IGNORED_SCHEDULERS=""
-IGNORED_CASE_STUDIES="herbie"
+IGNORED_CASE_STUDIES="herbie lean-egg"
 
 [ ! -e benchdata ] && mkdir benchdata
 

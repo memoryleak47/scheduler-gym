@@ -9,9 +9,8 @@ do
         filename="benchdata/$s/$c.cost"
         [ ! -e "$filename" ] && continue
         score=$(cat "$filename")
-        s2=$(printf "%-13s\n" "$s")
-        echo "$s2 = $score"
-    done
+        echo "$score <- $s"
+    done | sort
 
     echo
 done
