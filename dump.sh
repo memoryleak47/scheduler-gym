@@ -10,7 +10,7 @@ do
         [ ! -e "$filename" ] && continue
         score=$(cat "$filename")
         echo "$score <- $s"
-    done | sort
+    done | sort -n
 
     echo
 done
