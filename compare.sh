@@ -11,10 +11,17 @@ do
     cat "benchdata/$2/$c.entries" | grep "stop=Some(" | cut -d "[" -F 2 | cut -d "]" -F 1 > /tmp/tmp2.txt
     paste /tmp/tmp1.txt /tmp/tmp2.txt | awk '{
             l = $1; r = $2;
+
+            left_less += 0;
+            right_less += 0;
+
             if (l < r) left_less += 1;
             else if (l > r) right_less += 1;
+
+            total += 1;
         } END {
             print "Total left is smaller by:", left_less;
             print "Total right is smaller by:", right_less;
+            print "of a total of", total;
         }'
 done
