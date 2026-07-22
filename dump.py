@@ -56,9 +56,9 @@ if len(sys.argv) >= 3:
     arg2=sys.argv[2]
 
 if arg2 == "":
-   relevant_entries = filter_earliest_best
-elif arg2 == "last":
    relevant_entries = filter_last
+elif arg2 == "earliest":
+   relevant_entries = filter_earliest_best
 else:
     print("Weird arg2", arg2)
     assert(False)
