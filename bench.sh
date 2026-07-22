@@ -1,9 +1,5 @@
 #!/bin/bash
 
-function cost() {
-    cat $1 | grep "stop=Some(" | cut -d "[" -F 2 | cut -d "]" -F 1 | awk '{sum+=$1} END {print sum}'
-}
-
 IGNORED_SCHEDULERS=""
 IGNORED_CASE_STUDIES="herbie lean-egg"
 
@@ -38,10 +34,6 @@ do
         cat gym-common.rs >> /tmp/scheduler.rs
 
         (cd case-studies/$c; ./run.sh /tmp/scheduler.rs)
-
-        echo "-------------------------"
-        echo "case study '$c' run by scheduler '$s' reached a cost of:"
-        cost /tmp/entries.txt | tee "benchdata/$s/$c.cost"
         mv /tmp/entries.txt "benchdata/$s/$c.entries"
     done
 done
