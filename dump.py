@@ -3,24 +3,37 @@
 import os
 import sys
 
+def filter_last(entries):
+    return [e for e in entries if "Some(" in e["stop"]]
+
+def filter_earliest_best(entries):
+    out = []
+    best_entry = None
+    for e in entries:
+        if best_entry is None or tuple(e["costs"]) != tuple(best_entry["costs"]):
+            best_entry = e
+
+        if "Some" in e["stop"]:
+            out.append(best_entry)
+            best_entry = None
+
+    return out
+
 def cost_sum(entries):
     s = 0
-    for e in entries:
-        if "Some" not in e["stop"]: continue
+    for e in relevant_entries(entries):
         s += sum(e["costs"])
     return s
 
 def time_sum(entries):
     s = 0
-    for e in entries:
-        if "Some" not in e["stop"]: continue
+    for e in relevant_entries(entries):
         s += e["time"]
     return s
 
 def size_sum(entries):
     s = 0
-    for e in entries:
-        if "Some" not in e["stop"]: continue
+    for e in relevant_entries(entries):
         s += e["total_size"]
     return s
 
@@ -28,14 +41,26 @@ arg=""
 if len(sys.argv) >= 2:
     arg=sys.argv[1]
 
-if arg == "time":
+if arg == "":
+    cost = cost_sum
+elif arg == "time":
     cost = time_sum
 elif arg == "size":
     cost = size_sum
-elif arg == "":
-    cost = cost_sum
 else:
     print("Weird arg", arg)
+    assert(False)
+
+arg2=""
+if len(sys.argv) >= 3:
+    arg2=sys.argv[2]
+
+if arg2 == "":
+   relevant_entries = filter_earliest_best
+elif arg2 == "last":
+   relevant_entries = filter_last
+else:
+    print("Weird arg2", arg2)
     assert(False)
 
 def read(x):
