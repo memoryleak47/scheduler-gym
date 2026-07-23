@@ -22,34 +22,25 @@ def filter_earliest_best(entries):
 
     return out
 
-def cost_sum(entries):
-    s = 0
-    for e in relevant_entries(entries):
-        s += sum(e["costs"])
-    return s
+def cost_v(entry):
+    return sum(entry["costs"])
 
-def time_sum(entries):
-    s = 0
-    for e in relevant_entries(entries):
-        s += e["time"]
-    return s
+def time_v(entry):
+    return entry["time"]
 
-def size_sum(entries):
-    s = 0
-    for e in relevant_entries(entries):
-        s += e["total_size"]
-    return s
+def size_v(entry):
+    return entry["total_size"]
 
 arg=""
 if len(sys.argv) >= 2:
     arg=sys.argv[1]
 
 if arg == "":
-    cost = cost_sum
+    cost = cost_v
 elif arg == "time":
-    cost = time_sum
+    cost = time_v
 elif arg == "size":
-    cost = size_sum
+    cost = size_v
 else:
     print("Weird arg", arg)
     assert(False)
@@ -133,6 +124,12 @@ def check_db():
                 if n != k:
                     raise RuntimeError(f"{c}/{n_src} and {c}/{s} disagree on number of runs: {n} vs {k}")
 
+def effective_cost(entries):
+    s = 0
+    for entry in relevant_entries(entries):
+        s += cost(entry)
+    return s
+
 def dumpall():
     for (c, inner) in db.items():
         print()
@@ -141,12 +138,36 @@ def dumpall():
         l = []
         for (s, entries) in inner.items():
             if entries is None: continue
-            l.append((cost(entries), s))
+            l.append((effective_cost(entries), s))
         l = sorted(l)
 
         for (cs, s) in l:
             print(f"{cs} <- {s}")
 
+def compare(s1, s2):
+    for (c, inner) in db.items():
+        if s1 not in inner: continue
+        if s2 not in inner: continue
+
+        print()
+        print("===", c)
+
+        r1 = relevant_entries(inner[s1])
+        r2 = relevant_entries(inner[s2])
+
+        assert(len(r1) == len(r2))
+        total = len(r1)
+
+        val1 = 0
+        val2 = 0
+        for x1, x2 in zip(r1, r2):
+            x1 = cost(x1)
+            x2 = cost(x2)
+            if x1 < x2: val1 += 1
+            elif x1 > x2: val2 += 1
+        print(f"{s1} won {val1}/{total}")
+        print(f"{s2} won {val2}/{total}")
 
 check_db()
 dumpall()
+compare("backoff.rs", "detour-rhs-400.rs")
