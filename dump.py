@@ -192,7 +192,7 @@ def dev_plot(c, i, s1, s2):
 
     plt.title(f"{arg} development in {c}/{i}")
     plt.xlabel("Iteration count")
-    plt.ylabel("Size of the e-graph")
+    plt.ylabel(f"{arg}")
 
     plt.legend()
     plt.show()
