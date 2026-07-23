@@ -3,6 +3,9 @@
 import os
 import sys
 
+schedulers = os.listdir("schedulers")
+# schedulers = ["backoff.rs", "detour-rhs-400.rs"]
+
 def filter_last(entries):
     return [e for e in entries if "Some(" in e["stop"]]
 
@@ -111,7 +114,7 @@ for c in os.listdir("case-studies"):
     print("===", c)
 
     l = []
-    for s in os.listdir("schedulers"):
+    for s in schedulers:
         entries = get_entry_file(s, c)
         if entries is None: continue
 
