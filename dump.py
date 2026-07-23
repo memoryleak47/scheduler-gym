@@ -107,20 +107,46 @@ def parse_entry(entry):
         "stop": stop,
     }
 
+db = {}
+
 for c in os.listdir("case-studies"):
-    # lean-egg is weird
     if c == "lean-egg": continue
-    print()
-    print("===", c)
+
+    db[c] = {}
 
     l = []
     for s in schedulers:
         entries = get_entry_file(s, c)
-        if entries is None: continue
+        if entries is not None:
+            db[c][s] = entries
 
-        l.append((cost(entries), s))
-    l = sorted(l)
+def check_db():
+    for (c, inner) in db.items():
+        n = None
+        n_src = None
+        for (s, entries) in inner.items():
+            k = len(filter_last(entries))
+            if n is None:
+                n = k
+                n_src = s
+            else:
+                if n != k:
+                    raise RuntimeError(f"{c}/{n_src} and {c}/{s} disagree on number of runs: {n} vs {k}")
 
-    for (cs, s) in l:
-        print(f"{cs} <- {s}")
+def dumpall():
+    for (c, inner) in db.items():
+        print()
+        print("===", c)
 
+        l = []
+        for (s, entries) in inner.items():
+            if entries is None: continue
+            l.append((cost(entries), s))
+        l = sorted(l)
+
+        for (cs, s) in l:
+            print(f"{cs} <- {s}")
+
+
+check_db()
+dumpall()
