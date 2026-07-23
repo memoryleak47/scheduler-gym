@@ -3,6 +3,7 @@
 import os
 import sys
 import matplotlib.pyplot as plt
+import numpy as np
 
 schedulers = os.listdir("schedulers")
 # schedulers = ["backoff.rs", "detour-rhs-400.rs"]
@@ -197,4 +198,32 @@ def dev_plot(c, i, s1, s2):
     plt.legend()
     plt.show()
 
-dev_plot("szalinski", 5, "backoff.rs", "detour-rhs-400.rs")
+def compare_plot(c, s1, s2):
+    if s1 not in db[c]: raise RuntimeError(f"{s1} not in {c}")
+    if s2 not in db[c]: raise RuntimeError(f"{s2} not in {c}")
+
+    l1 = relevant_entries(db[c][s1])
+    l2 = relevant_entries(db[c][s2])
+
+    l1 = [cost(x) for x in l1]
+    l2 = [cost(x) for x in l2]
+
+    assert(len(l1) == len(l2))
+    n = len(l1)
+
+    y = np.arange(n)
+    height = 0.4
+
+    plt.figure(figsize=(8, 10))
+    plt.barh(y - height/2, l1, height, label=s1)
+    plt.barh(y + height/2, l2, height, label=s2)
+
+    plt.yticks(y, list(range(n)))
+    plt.xlabel(arg)
+    plt.title(f"{arg} comparison in {c}; {s1} vs {s2}")
+    plt.legend()
+    plt.gca().invert_yaxis()  # Reads top-to-bottom
+    plt.tight_layout()
+    plt.show()
+
+compare_plot("trig", "backoff.rs", "detour1.rs")
