@@ -2,6 +2,7 @@
 
 import os
 import sys
+import matplotlib.pyplot as plt
 
 schedulers = os.listdir("schedulers")
 # schedulers = ["backoff.rs", "detour-rhs-400.rs"]
@@ -37,6 +38,7 @@ if len(sys.argv) >= 2:
 
 if arg == "":
     cost = cost_v
+    arg = "cost"
 elif arg == "time":
     cost = time_v
 elif arg == "size":
@@ -51,6 +53,7 @@ if len(sys.argv) >= 3:
 
 if arg2 == "":
    relevant_entries = filter_last
+   arg2 = "last"
 elif arg2 == "earliest":
    relevant_entries = filter_earliest_best
 else:
@@ -168,6 +171,30 @@ def compare(s1, s2):
         print(f"{s1} won {val1}/{total}")
         print(f"{s2} won {val2}/{total}")
 
-check_db()
-dumpall()
-compare("backoff.rs", "detour-rhs-400.rs")
+def entries_decompose(entries):
+    out = []
+    current = []
+    for e in entries:
+        current.append(e)
+        if e["stop"] != "None":
+            out.append(current)
+            current = []
+    return out
+
+def dev_plot(c, i, s1, s2):
+    e1 = entries_decompose(db[c][s1])[i]
+    e2 = entries_decompose(db[c][s2])[i]
+
+    l1 = [cost(x) for x in e1]
+    l2 = [cost(x) for x in e2]
+    plt.plot(l1, label=s1)
+    plt.plot(l2, label=s2)
+
+    plt.title(f"{arg} development in {c}/{i}")
+    plt.xlabel("Iteration count")
+    plt.ylabel("Size of the e-graph")
+
+    plt.legend()
+    plt.show()
+
+dev_plot("szalinski", 5, "backoff.rs", "detour-rhs-400.rs")
