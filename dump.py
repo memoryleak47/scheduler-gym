@@ -226,4 +226,7 @@ def compare_plot(c, s1, s2):
     plt.tight_layout()
     plt.show()
 
-compare_plot("trig", "backoff.rs", "detour1.rs")
+check_db()
+dumpall()
+
+#compare_plot("szalinski", "backoff-legal.rs", "backoff.rs")
