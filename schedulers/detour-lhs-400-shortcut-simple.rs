@@ -1,20 +1,10 @@
 // The e-match shortcut makes stuff worse. I am unsure why. It seems to indicate a bug.
 
-use std::collections::HashSet;
-
-struct Infos {
-    special_rules: HashSet<usize>,
-}
-
-fn sched_init() -> Infos {
-    Infos {
-        special_rules: HashSet::new(),
-    }
-}
+fn sched_init() { }
 
 const MAX: usize = 400;
 
-fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ctxt: &mut Ctxt<'a, L, N, IterData>, infos: &mut Infos) -> Result<(), StopReason> {
+fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ctxt: &mut Ctxt<'a, L, N, IterData>, _: &mut ()) -> Result<(), StopReason> {
     let ex = Extractor::new(&ctxt.runner.egraph, AdditiveCostFn(ctxt.cfg.cf));
     let ctxt_cost = compute_ctxt_costs(&ex, ctxt);
 
@@ -32,17 +22,17 @@ fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
     let mut rws: Box<[(usize, _)]> = ctxt.rws.iter().enumerate().collect();
 
     // We'll start with the non-special ones, and then come the special ones.
-    rws.sort_by_key(|(rw_i, _)| infos.special_rules.contains(&rw_i));
+    rws.sort_by_key(|(_, rw)| ctxt.special_rules.contains(&rw.name));
 
     for (id, detour) in classes {
         if matches.len() == MAX && matches.last().unwrap().0 <= detour {
-            eprintln!("break at {detour}!");
+            // eprintln!("break at {detour}!");
             break
         }
 
         for (rw_i, rw) in rws.iter().copied() {
             let effective_pat = rw.searcher.get_pattern_ast().unwrap();
-            let is_special = infos.special_rules.contains(&rw_i);
+            let is_special = ctxt.special_rules.contains(&rw.name);
 
             let submatches = rw.searcher.search_eclass(&ctxt.runner.egraph, id).map(|x| x.substs).unwrap_or_else(Vec::new);
             for subst in submatches {
@@ -73,7 +63,11 @@ fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
 
     let eg_data = |eg: &EGraph<_, _>| (eg.number_of_classes(), eg.total_size());
 
-    for (c, rw_i, lhs, subst) in matches.into_iter().chain(special_matches.into_iter()) {
+    matches.extend(special_matches);
+    matches.sort_by_key(|x| x.0);
+
+    let mut counter = 0;
+    for (c, rw_i, lhs, subst) in matches {
         let rw = &ctxt.rws[rw_i];
         let pat_ast = rw.searcher.get_pattern_ast();
 
@@ -81,11 +75,15 @@ fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
         rw.applier.apply_one(&mut ctxt.runner.egraph, lhs, &subst, pat_ast, rw.name);
         let postdata = eg_data(&ctxt.runner.egraph);
             
-        if predata == postdata {
-            infos.special_rules.insert(rw_i);
+        if predata != postdata {
+            counter += 1;
+            if counter >= MAX { break }
         }
 
         ctxt.check_limits()?;
+    }
+    if counter < MAX {
+        // eprintln!("Just {counter}/{MAX} mutating rule applications!");
     }
 
     ctxt.runner.egraph.rebuild();

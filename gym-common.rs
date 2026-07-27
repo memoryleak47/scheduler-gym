@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
+use std::collections::HashSet;
 use egg::*;
-
 
 pub type Cost = u128;
 
@@ -27,6 +27,7 @@ impl<L: Language> CostFunction<L> for AdditiveCostFn<L> {
 
 struct Ctxt<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>> {
     runner: Runner<L, N, IterData>,
+    special_rules: HashSet<Symbol>,
     rws: &'a [Rewrite<L, N>],
     limits: Limits,
     cfg: CostConfig<L>,
@@ -106,6 +107,7 @@ pub fn run<L: Language, N: Analysis<L> + Default, IterData: IterationData<L, N>>
         rws,
         limits,
         cfg,
+        special_rules: mk_special_rules(),
 
         start: Instant::now(),
     };
@@ -141,3 +143,34 @@ pub fn run<L: Language, N: Analysis<L> + Default, IterData: IterationData<L, N>>
     ctxt.runner
 }
 
+fn mk_special_rules() -> HashSet<Symbol> {
+    let mut special_rules = HashSet::new();
+
+    // trig
+    special_rules.insert(Symbol::new("i-recip-frac"));
+    special_rules.insert(Symbol::new("cancel-frac"));
+    special_rules.insert(Symbol::new("recip-mul"));
+
+    // integ
+    special_rules.insert(Symbol::new("int-const-mul"));
+    special_rules.insert(Symbol::new("int-const"));
+    special_rules.insert(Symbol::new("int-pow"));
+    special_rules.insert(Symbol::new("d-const"));
+    special_rules.insert(Symbol::new("d-const-mul"));
+
+    // szalinski
+    special_rules.insert(Symbol::new("flatten_union"));
+    special_rules.insert(Symbol::new("mul_div"));
+    special_rules.insert(Symbol::new("div_mul"));
+    special_rules.insert(Symbol::new("scale_cone"));
+    special_rules.insert(Symbol::new("scale_cylinder"));
+    special_rules.insert(Symbol::new("scale_cube"));
+    special_rules.insert(Symbol::new("scale_sphere"));
+    special_rules.insert(Symbol::new("listapplier"));
+    special_rules.insert(Symbol::new("sortapplier"));
+    special_rules.insert(Symbol::new("partapplier"));
+    special_rules.insert(Symbol::new("unpart-unsort"));
+    special_rules.insert(Symbol::new("sort-unpart"));
+
+    special_rules
+}
