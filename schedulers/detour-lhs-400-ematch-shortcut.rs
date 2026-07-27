@@ -20,7 +20,10 @@ fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
     let ex = Extractor::new(&ctxt.runner.egraph, AdditiveCostFn(ctxt.cfg.cf));
     let ctxt_cost = compute_ctxt_costs(&ex, ctxt);
 
-    let mut classes: Vec<(Id, /*detour cost*/ Cost)> = ctxt_cost.iter().map(|(id, c)| (*id, c + ex.find_best_cost(*id))).collect();
+    let mut classes: Vec<(Id, /*detour cost*/ Cost)> = ctxt.runner.egraph.classes()
+            .map(|x| x.id)
+            .map(|id| (id, ctxt_cost.get(&id).unwrap_or(&ctxt.cfg.unreachable_cost) + ex.find_best_cost(id)))
+            .collect();
     classes.sort_by_key(|x| x.1);
 
     // has to remain sorted by Cost, and length <= MAX.
@@ -114,7 +117,9 @@ fn ematch<'a, 'r, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
 
         let local_threshold = (threshold - mmatches.len()).saturating_add(1);
         let submatches = rw.searcher.search_eclass_with_limit(&ctxt.runner.egraph, *id, local_threshold);
-        total_len += submatches.iter().map(|m| m.substs.len()).sum::<usize>();
+        if let Some(m) = &submatches {
+            total_len += m.substs.len();
+        }
 
         if total_len > threshold {
             let ban_length = stats.ban_length << stats.times_banned;

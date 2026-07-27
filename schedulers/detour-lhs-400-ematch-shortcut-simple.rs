@@ -18,7 +18,10 @@ fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
     let ex = Extractor::new(&ctxt.runner.egraph, AdditiveCostFn(ctxt.cfg.cf));
     let ctxt_cost = compute_ctxt_costs(&ex, ctxt);
 
-    let mut classes: Vec<(Id, /*detour cost*/ Cost)> = ctxt_cost.iter().map(|(id, c)| (*id, c + ex.find_best_cost(*id))).collect();
+    let mut classes: Vec<(Id, /*detour cost*/ Cost)> = ctxt.runner.egraph.classes()
+            .map(|x| x.id)
+            .map(|id| (id, ctxt_cost.get(&id).unwrap_or(&ctxt.cfg.unreachable_cost) + ex.find_best_cost(id)))
+            .collect();
     classes.sort_by_key(|x| x.1);
 
     // has to remain sorted by Cost, and length <= MAX.
@@ -41,9 +44,8 @@ fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
             let effective_pat = rw.searcher.get_pattern_ast().unwrap();
             let is_special = infos.special_rules.contains(&rw_i);
 
-            let submatches = rw.searcher.search_eclass_with_limit(&ctxt.runner.egraph, id, 1000);
-            if submatches.len() == 1000 { eprintln!("Big match!"); }
-            for subst in submatches.into_iter().map(|m| m.substs.into_iter()).flatten() {
+            let submatches = rw.searcher.search_eclass(&ctxt.runner.egraph, id).map(|x| x.substs).unwrap_or_else(Vec::new);
+            for subst in submatches {
                 if let Some(rhs_eclass) = rw.applier.get_pattern_ast().and_then(|rhs_pat| lookup_pat(rhs_pat, &ctxt.runner.egraph, &subst)) {
                     if id == rhs_eclass {
                         continue
@@ -71,7 +73,6 @@ fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
 
     let eg_data = |eg: &EGraph<_, _>| (eg.number_of_classes(), eg.total_size());
 
-    dbg!(matches.len());
     for (c, rw_i, lhs, subst) in matches.into_iter().chain(special_matches.into_iter()) {
         let rw = &ctxt.rws[rw_i];
         let pat_ast = rw.searcher.get_pattern_ast();
