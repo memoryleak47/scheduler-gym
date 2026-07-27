@@ -28,7 +28,12 @@ fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
 
     let mut special_matches: Vec<(Cost, usize, Id, Subst)> = Vec::new();
 
-    for (rw_i, rw) in ctxt.rws.iter().enumerate() {
+    let mut rws: Box<[(usize, _)]> = ctxt.rws.iter().enumerate().collect();
+
+    // We'll start with the non-special ones, and then come the special ones.
+    rws.sort_by_key(|(rw_i, _)| infos.special_rules.contains(&rw_i));
+
+    for (rw_i, rw) in rws {
         let effective_pat = rw.searcher.get_pattern_ast().unwrap();
         let is_special = infos.special_rules.contains(&rw_i);
 
