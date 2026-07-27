@@ -52,7 +52,7 @@ fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
                 while matches.len() > MAX { matches.pop(); }
                 if let Some((threshold, ..)) = matches.last() {
                     while let Some((cost, ..)) = special_matches.last() {
-                        if cost > threshold { special_matches.pop() }
+                        if cost > threshold { special_matches.pop(); }
                         else { break }
                     }
                 }
