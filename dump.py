@@ -228,5 +228,3 @@ def compare_plot(c, s1, s2):
 
 check_db()
 dumpall()
-
-#compare_plot("szalinski", "backoff-legal.rs", "backoff.rs")
