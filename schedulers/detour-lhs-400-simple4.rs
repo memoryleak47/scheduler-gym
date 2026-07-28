@@ -1,5 +1,8 @@
 fn sched_init() -> () { () }
 
+const MAX_COUNTER: usize = 400;
+const MAX_STORAGE: usize = 4000;
+
 fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ctxt: &mut Ctxt<'a, L, N, IterData>, _: &mut ()) -> Result<(), StopReason> {
     let ex = Extractor::new(&ctxt.runner.egraph, AdditiveCostFn(ctxt.cfg.cf));
     let ctxt_cost = compute_ctxt_costs(&ex, ctxt);
@@ -33,11 +36,11 @@ fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
                 let detour_cost = cx_cost + pat_cost;
 
                 if !special {
-                    if let Some(worst) = costs.last() {
+                    if let Some(worst) = costs.get(MAX_STORAGE-1) {
                         if detour_cost >= *worst { continue }
                     }
                     sorted_push(&mut costs, detour_cost);
-                    costs.truncate(400);
+                    costs.truncate(MAX_STORAGE);
                 }
 
                 matches.entry(detour_cost).or_insert(Vec::new()).push((rw_i, lhs, subst));
@@ -61,7 +64,7 @@ fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
 
             if prev_data != post_data {
                 counter += 1;
-                if counter >= 400 { break 'outer }
+                if counter >= MAX_COUNTER { break 'outer }
             }
 
             ctxt.check_limits()?;
