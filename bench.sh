@@ -1,12 +1,15 @@
 #!/bin/bash
 
 IGNORED_SCHEDULERS="backoff-fresh.rs backoff-legal.rs detour-rhs.rs size-bounded.rs backoff-illegal.rs detour-rhs-20.rs detour-rhs-400-merge.rs detour-vanilla.rs detour-lhs-400-simple2.rs detour-lhs-400-simple4-800.rs detour-lhs-400-shortcut-simple.rs detour-lhs-400-simple4.rs detour-lhs-400-simple4-shortcut.rs detour-lhs-400-simple.rs detour-lhs-400-simple4-nostorage.rs detour-lhs-400-simple3.rs"
+PRIO_SCHEDULERS="backoff.rs detour-lhs-400.rs detour1.rs detour-rhs-400.rs"
 
-IGNORED_CASE_STUDIES="herbie lean-egg"
+IGNORED_CASE_STUDIES="herbie lean-egg trig integ szalinski"
+PRIO_CASE_STUDIES="caviar"
+
 
 [ ! -e benchdata ] && mkdir benchdata
 
-for s in $(ls schedulers)
+for s in $PRIO_SCHEDULERS $(ls schedulers)
 do
     if [[ "$IGNORED_SCHEDULERS" =~ "$s" ]]; then
         echo "Ignoring scheduler '$s' for now"
@@ -15,7 +18,7 @@ do
 
     [ ! -e "benchdata/$s" ] && mkdir "benchdata/$s"
 
-    for c in $(ls case-studies | sort -r)
+    for c in $PRIO_CASE_STUDIES $(ls case-studies | sort -r)
     do
         if [[ "$IGNORED_CASE_STUDIES" =~ "$c" ]]; then
             echo "Ignoring case study '$c' for now"
