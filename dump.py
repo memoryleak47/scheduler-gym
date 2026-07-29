@@ -233,15 +233,21 @@ def quality_dev_plot(res, c, i, s1, s2):
     e2 = entries_decompose(db[c][s2])[i]
 
     best_cost = min(cost_v(e1[-1]), cost_v(e2[-1]))
+    good1 = False
     e1_ = []
     for e in e1:
         e1_.append(e)
-        if cost_v(e) == best_cost: break
+        if cost_v(e) == best_cost:
+            good1 = True
+            break
 
     e2_ = []
+    good2 = False
     for e in e2:
         e2_.append(e)
-        if cost_v(e) == best_cost: break
+        if cost_v(e) == best_cost:
+            good2 = True
+            break
 
     e1 = e1_
     e2 = e2_
@@ -255,6 +261,14 @@ def quality_dev_plot(res, c, i, s1, s2):
 
     plt.plot(r1, q1, label=s1)
     plt.plot(r2, q2, label=s2)
+
+
+    #plt.plot(r1[-1], q1[-1], marker=r'$\checkmark$', color='green', markersize=10)
+    #plt.plot(r2[-1], q2[-1], marker=r'$\checkmark$', color='green', markersize=10)
+    if good1:
+        plt.annotate('✓', (r1[-1], q1[-1]), textcoords="offset points", xytext=(5, 5), color='green', fontsize=40, fontweight='bold')
+    if good2:
+        plt.annotate('✓', (r2[-1], q2[-1]), textcoords="offset points", xytext=(5, 5), color='green', fontsize=40, fontweight='bold')
 
     plt.title(f"extraction cost per {res} in {c}/{i}")
     plt.xlabel(f"{res} cost")
