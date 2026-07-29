@@ -281,7 +281,7 @@ def quality_dev_plot(res, c, i, s1, s2):
     plt.show()
 
 def plot_all():
-    for c in ["szalinski", "trig", "integ", "lean-egg"]:
+    for c in ["szalinski", "trig", "integ", "caviar", "lean-egg"]:
         stop = False
         for i in range(1000):
             for res in ["time", "size"]:
@@ -290,5 +290,5 @@ def plot_all():
             if stop == True: break
 
 check_db()
-
+dumpall()
 plot_all()
