@@ -24,6 +24,17 @@ def filter_earliest_best(entries):
 
     return out
 
+def general_v(res):
+    if res == "":
+        return cost_v
+    elif res == "time":
+        return time_v
+    elif res == "size":
+        return size_v
+    else:
+        print("Weird arg", arg)
+        assert(False)
+
 def cost_v(entry):
     return sum(entry["costs"])
 
@@ -36,17 +47,7 @@ def size_v(entry):
 arg=""
 if len(sys.argv) >= 2:
     arg=sys.argv[1]
-
-if arg == "":
-    cost = cost_v
-    arg = "cost"
-elif arg == "time":
-    cost = time_v
-elif arg == "size":
-    cost = size_v
-else:
-    print("Weird arg", arg)
-    assert(False)
+cost = general_v(arg)
 
 arg2=""
 if len(sys.argv) >= 3:
@@ -226,5 +227,42 @@ def compare_plot(c, s1, s2):
     plt.tight_layout()
     plt.show()
 
+# shows how good the output is in terms of extraction cost (Y), after investing (X) much resources (time/size)
+def quality_dev_plot(res, c, i, s1, s2):
+    e1 = entries_decompose(db[c][s1])[i]
+    e2 = entries_decompose(db[c][s2])[i]
+
+    best_cost = min(cost_v(e1[-1]), cost_v(e2[-1]))
+    e1_ = []
+    for e in e1:
+        e1_.append(e)
+        if cost_v(e) == best_cost: break
+
+    e2_ = []
+    for e in e2:
+        e2_.append(e)
+        if cost_v(e) == best_cost: break
+
+    e1 = e1_
+    e2 = e2_
+
+    f = general_v(res)
+    r1 = [f(x) for x in e1]
+    r2 = [f(x) for x in e2]
+
+    q1 = [cost_v(x) for x in e1]
+    q2 = [cost_v(x) for x in e2]
+
+    plt.plot(r1, q1, label=s1)
+    plt.plot(r2, q2, label=s2)
+
+    plt.title(f"extraction cost per {res} in {c}/{i}")
+    plt.xlabel(f"{res} cost")
+    plt.ylabel(f"extraction cost")
+
+    plt.legend()
+    plt.show()
+
 check_db()
-dumpall()
+for i in range(1000):
+    quality_dev_plot("size", "szalinski", i, "backoff.rs", "detour-lhs-400.rs")
