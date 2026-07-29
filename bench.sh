@@ -6,17 +6,46 @@ PRIO_SCHEDULERS="backoff.rs detour-lhs-400.rs detour1.rs detour-rhs-400.rs"
 IGNORED_CASE_STUDIES="herbie lean-egg trig integ szalinski"
 PRIO_CASE_STUDIES="caviar"
 
+function bench1() {
+    s="$1"
+    c="$2"
+    [ ! -e "benchdata/$s" ] && mkdir "benchdata/$s"
+    [ -e "benchdata/$s/$c.entries" ] && return
+
+    echo "========================="
+    echo "CASE STUDY '$c' run by scheduler '$s'"
+    sleep 0.2
+
+    rm -f /tmp/entries.txt
+    rm -f /tmp/scheduler.rs
+
+    cp "schedulers/$s" /tmp/scheduler.rs
+    cat gym-common.rs >> /tmp/scheduler.rs
+
+    (cd case-studies/$c; ./run.sh /tmp/scheduler.rs)
+    mv /tmp/entries.txt "benchdata/$s/$c.entries"
+}
+
 
 [ ! -e benchdata ] && mkdir benchdata
 
+
+# prio runs
+for s in $PRIO_SCHEDULERS
+do
+    for c in $PRIO_CASE_STUDIES
+    do
+        bench1 "$s" "$c"
+    done
+done
+
+# semi-prio and non-prio runs
 for s in $PRIO_SCHEDULERS $(ls schedulers)
 do
     if [[ "$IGNORED_SCHEDULERS" =~ "$s" ]]; then
         echo "Ignoring scheduler '$s' for now"
         continue
     fi
-
-    [ ! -e "benchdata/$s" ] && mkdir "benchdata/$s"
 
     for c in $PRIO_CASE_STUDIES $(ls case-studies | sort -r)
     do
@@ -25,19 +54,7 @@ do
             continue
         fi
 
-        [ -e "benchdata/$s/$c.entries" ] && continue
+        bench1 "$s" "$c"
 
-        echo "========================="
-        echo "CASE STUDY '$c' run by scheduler '$s'"
-        sleep 0.2
-
-        rm -f /tmp/entries.txt
-        rm -f /tmp/scheduler.rs
-
-        cp "schedulers/$s" /tmp/scheduler.rs
-        cat gym-common.rs >> /tmp/scheduler.rs
-
-        (cd case-studies/$c; ./run.sh /tmp/scheduler.rs)
-        mv /tmp/entries.txt "benchdata/$s/$c.entries"
     done
 done
