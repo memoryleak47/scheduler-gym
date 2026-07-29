@@ -263,8 +263,8 @@ def quality_dev_plot(res, c, i, s1, s2):
     q1 = [cost_v(x) for x in e1]
     q2 = [cost_v(x) for x in e2]
 
-    plt.plot(r1, q1, label=s1)
-    plt.plot(r2, q2, label=s2)
+    plt.plot(r1, q1, label=s1, marker="o")
+    plt.plot(r2, q2, label=s2, marker="o")
 
     #plt.plot(r1[-1], q1[-1], marker=r'$\checkmark$', color='green', markersize=10)
     #plt.plot(r2[-1], q2[-1], marker=r'$\checkmark$', color='green', markersize=10)
