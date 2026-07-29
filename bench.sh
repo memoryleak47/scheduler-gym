@@ -1,7 +1,7 @@
 #!/bin/bash
 
-IGNORED_SCHEDULERS="backoff-fresh.rs backoff-legal.rs detour1-400.rs detour1.rs detour-rhs-200.rs detour-rhs-300.rs detour-rhs.rs size-bounded.rs backoff-illegal.rs detour1-rhs.rs detour-rhs-100.rs detour-rhs-20.rs detour-rhs-400-merge.rs detour-rhs-500.rs detour-vanilla.rs"
-IGNORED_CASE_STUDIES="herbie lean-egg"
+IGNORED_SCHEDULERS="backoff-legal.rs detour1-400.rs detour1.rs detour-rhs-200.rs detour-rhs-300.rs detour-rhs.rs size-bounded.rs backoff-illegal.rs detour1-rhs.rs detour-rhs-100.rs detour-rhs-20.rs detour-rhs-400-merge.rs detour-rhs-500.rs detour-vanilla.rs"
+IGNORED_CASE_STUDIES="herbie"
 
 [ ! -e benchdata ] && mkdir benchdata
 

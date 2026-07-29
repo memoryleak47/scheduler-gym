@@ -106,8 +106,6 @@ def parse_entry(entry):
 db = {}
 
 for c in os.listdir("case-studies"):
-    if c == "lean-egg": continue
-
     db[c] = {}
 
     l = []
@@ -283,7 +281,7 @@ def quality_dev_plot(res, c, i, s1, s2):
     plt.show()
 
 def plot_all():
-    for c in ["szalinski", "trig", "integ"]:
+    for c in ["szalinski", "trig", "integ", "lean-egg"]:
         stop = False
         for i in range(1000):
             for res in ["time", "size"]:
