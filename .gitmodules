@@ -13,3 +13,6 @@
 [submodule "case-studies/integ"]
 	path = case-studies/integ
 	url = git@github.com:memoryleak47/trig-benchmark.git
+[submodule "case-studies/caviar"]
+	path = case-studies/caviar
+	url = git@github.com:memoryleak47/caviar.git
