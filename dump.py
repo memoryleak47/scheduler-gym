@@ -229,8 +229,14 @@ def compare_plot(c, s1, s2):
 
 # shows how good the output is in terms of extraction cost (Y), after investing (X) much resources (time/size)
 def quality_dev_plot(res, c, i, s1, s2):
-    e1 = entries_decompose(db[c][s1])[i]
-    e2 = entries_decompose(db[c][s2])[i]
+    ll1 = entries_decompose(db[c][s1])
+    ll2 = entries_decompose(db[c][s2])
+    assert(len(ll1) == len(ll2))
+
+    if i >= len(ll1): return True
+
+    e1 = ll1[i]
+    e2 = ll2[i]
 
     best_cost = min(cost_v(e1[-1]), cost_v(e2[-1]))
     good1 = False
@@ -262,7 +268,6 @@ def quality_dev_plot(res, c, i, s1, s2):
     plt.plot(r1, q1, label=s1)
     plt.plot(r2, q2, label=s2)
 
-
     #plt.plot(r1[-1], q1[-1], marker=r'$\checkmark$', color='green', markersize=10)
     #plt.plot(r2[-1], q2[-1], marker=r'$\checkmark$', color='green', markersize=10)
     if good1:
@@ -277,6 +282,15 @@ def quality_dev_plot(res, c, i, s1, s2):
     plt.legend()
     plt.show()
 
+def plot_all():
+    for c in ["szalinski", "trig", "integ"]:
+        stop = False
+        for i in range(1000):
+            for res in ["time", "size"]:
+                if quality_dev_plot(res, c, i, "backoff.rs", "detour-lhs-400.rs"):
+                    stop = True
+            if stop == True: break
+
 check_db()
-for i in range(1000):
-    quality_dev_plot("size", "szalinski", i, "backoff.rs", "detour-lhs-400.rs")
+
+plot_all()
