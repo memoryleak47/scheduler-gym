@@ -289,6 +289,21 @@ def plot_all():
                     stop = True
             if stop == True: break
 
-check_db()
-dumpall()
-plot_all()
+def caviar_solvedcount():
+    print("caviar solved count:")
+    ll = []
+    for (s, entries) in db["caviar"].items():
+        counter = 0
+        entries = filter_last(entries)
+        for e in entries:
+            if e["costs"][0] == 1:
+                counter += 1
+        ll.append((counter, s))
+    ll = sorted(ll, key=lambda x: (-x[0], x[1]))
+    for (counter, s) in ll:
+        print(f"{counter} <- {s}")
+
+#check_db()
+#dumpall()
+#plot_all()
+caviar_solvedcount()
