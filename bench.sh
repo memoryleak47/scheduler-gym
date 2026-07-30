@@ -1,10 +1,10 @@
 #!/bin/bash
 
 IGNORED_SCHEDULERS="backoff-fresh.rs backoff-legal.rs detour-rhs.rs size-bounded.rs backoff-illegal.rs detour-rhs-20.rs detour-rhs-400-merge.rs detour-vanilla.rs detour-lhs-400-simple2.rs detour-lhs-400-simple4-800.rs detour-lhs-400-shortcut-simple.rs detour-lhs-400-simple4.rs detour-lhs-400-simple4-shortcut.rs detour-lhs-400-simple.rs detour-lhs-400-simple4-nostorage.rs detour-lhs-400-simple3.rs"
-PRIO_SCHEDULERS="backoff.rs detour-lhs-400.rs detour1.rs detour-rhs-400.rs"
+PRIO_SCHEDULERS="detour-lhs-400-dynamic.rs detour-lhs-400-prestart.rs"
 
-IGNORED_CASE_STUDIES="herbie lean-egg trig integ szalinski"
-PRIO_CASE_STUDIES="caviar"
+IGNORED_CASE_STUDIES="herbie lean-egg"
+PRIO_CASE_STUDIES=""
 
 function bench1() {
     s="$1"

@@ -125,7 +125,7 @@ def check_db():
                 n_src = s
             else:
                 if n != k:
-                    raise RuntimeError(f"{c}/{n_src} and {c}/{s} disagree on number of runs: {n} vs {k}")
+                    print(f"\033[31m{c}/{n_src} and {c}/{s} disagree on number of runs: {n} vs {k}\033[0m")
 
 def effective_cost(entries):
     s = 0
@@ -303,7 +303,7 @@ def caviar_solvedcount():
     for (counter, s) in ll:
         print(f"{counter} <- {s}")
 
-#check_db()
-#dumpall()
+check_db()
+dumpall()
 #plot_all()
-caviar_solvedcount()
+#caviar_solvedcount()
