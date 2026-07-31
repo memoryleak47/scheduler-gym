@@ -19,7 +19,7 @@ function bench1() {
     cp "schedulers/$s" /tmp/scheduler.rs
     cat gym-common.rs >> /tmp/scheduler.rs
 
-    (cd case-studies/$c; ./run.sh /tmp/scheduler.rs)
+    (cd case-studies/$c; ./run.sh /tmp/scheduler.rs) |& tee "benchdata/$s/$c.log"
     mv /tmp/entries.txt "benchdata/$s/$c.entries"
 }
 
