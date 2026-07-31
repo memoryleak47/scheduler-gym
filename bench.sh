@@ -1,10 +1,7 @@
 #!/bin/bash
 
-IGNORED_SCHEDULERS="backoff-fresh.rs backoff-legal.rs detour-rhs.rs size-bounded.rs backoff-illegal.rs detour-rhs-20.rs detour-rhs-400-merge.rs detour-vanilla.rs detour-lhs-400-simple2.rs detour-lhs-400-simple4-800.rs detour-lhs-400-shortcut-simple.rs detour-lhs-400-simple4.rs detour-lhs-400-simple4-shortcut.rs detour-lhs-400-simple.rs detour-lhs-400-simple4-nostorage.rs detour-lhs-400-simple3.rs"
-PRIO_SCHEDULERS="detour-lhs-400-dynamic.rs detour-lhs-400-prestart.rs"
-
-IGNORED_CASE_STUDIES="herbie lean-egg"
-PRIO_CASE_STUDIES=""
+SCHEDULERS="detour-lhs-400.rs backoff.rs detour-rhs-400.rs detour1.rs"
+CASE_STUDIES="caviar trig integ szalinski"
 
 function bench1() {
     s="$1"
@@ -29,32 +26,10 @@ function bench1() {
 
 [ ! -e benchdata ] && mkdir benchdata
 
-
-# prio runs
-for s in $PRIO_SCHEDULERS
+for s in $SCHEDULERS
 do
-    for c in $PRIO_CASE_STUDIES
+    for c in $CASE_STUDIES
     do
         bench1 "$s" "$c"
-    done
-done
-
-# semi-prio and non-prio runs
-for s in $PRIO_SCHEDULERS $(ls schedulers)
-do
-    if [[ "$IGNORED_SCHEDULERS" =~ "$s" ]]; then
-        echo "Ignoring scheduler '$s' for now"
-        continue
-    fi
-
-    for c in $PRIO_CASE_STUDIES $(ls case-studies | sort -r)
-    do
-        if [[ "$IGNORED_CASE_STUDIES" =~ "$c" ]]; then
-            echo "Ignoring case study '$c' for now"
-            continue
-        fi
-
-        bench1 "$s" "$c"
-
     done
 done
