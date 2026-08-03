@@ -290,7 +290,8 @@ def plot_all():
             if stop == True: break
 
 def caviar_solvedcount():
-    print("caviar solved count:")
+    print("\n\n================")
+    print("=== caviar solved count:")
     ll = []
     for (s, entries) in db["caviar"].items():
         counter = 0
@@ -306,4 +307,4 @@ def caviar_solvedcount():
 check_db()
 dumpall()
 #plot_all()
-#caviar_solvedcount()
+caviar_solvedcount()
