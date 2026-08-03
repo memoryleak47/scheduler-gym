@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCHEDULERS="detour-lhs-400.rs backoff.rs detour-rhs-400.rs detour1.rs"
-CASE_STUDIES="caviar trig integ szalinski"
+CASE_STUDIES="lean-egg"
 
 function bench1() {
     s="$1"
