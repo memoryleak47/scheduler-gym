@@ -277,9 +277,14 @@ def _per_resource(df: pl.DataFrame, *cols: str) -> pl.DataFrame:
 
 
 def _profile(
-    points: pl.DataFrame, ends: pl.DataFrame, fin: pl.DataFrame, log_x: bool
+    points: pl.DataFrame,
+    ends: pl.DataFrame,
+    fin: pl.DataFrame,
+    log_x: bool,
+    y_min: float,
 ) -> p9.ggplot:
-    """Step curves from 0 at `lo` through `points` to `hi`, per case, resource and scheduler."""
+    """Step curves from 0 at `lo` through `points` to `hi`, per case, resource and scheduler,
+    showing y from `y_min` to 1."""
     group = ["case", "resource", "scheduler"]
     curves = pl.concat(
         [
@@ -293,7 +298,7 @@ def _profile(
         # curves that stay at 0 get no star
         _steps(curves, "y", ["case", "resource"], log_x, pl.col("y") > 0)
         + _facets("resource", len(RESOURCES), "free_x")
-        + p9.coord_cartesian(ylim=(0, 1))
+        + p9.coord_cartesian(ylim=(y_min, 1))
     )
 
 
@@ -304,9 +309,10 @@ def solved_profile(
     case: str = "caviar",
     solved_cost: float = 1,
     log_x: bool = False,
+    y_min: float = 0,
 ) -> p9.ggplot:
     """Fraction of runs per scheduler that reached `solved_cost` within a resource budget.
-    `log_x`: log x axis."""
+    `log_x`: log x axis; `y_min`: lower end of the y axis, to zoom in on high fractions."""
     df, fin = select(df.filter(pl.col("case") == case), schedulers)
     group = ["case", "resource", "scheduler"]
     d = _per_resource(df, "cost")
@@ -330,7 +336,7 @@ def solved_profile(
         .join(proofs.group_by(group).agg(pl.col("y").max()), on=group, how="left")
         .with_columns(pl.col("y").fill_null(0))
     )
-    return _profile(proofs, ends, fin, log_x) + p9.labs(
+    return _profile(proofs, ends, fin, log_x, y_min) + p9.labs(
         x="",
         y="runs with a proof",
         title=f"{case}: proving the goal",
@@ -345,9 +351,10 @@ def profile(
     schedulers: Sequence[Scheduler] = SCHEDULERS,
     *,
     log_x: bool = False,
+    y_min: float = 0,
 ) -> p9.ggplot:
     """Fraction of runs per scheduler that reached the best known cost within a resource budget.
-    `log_x`: log x axis."""
+    `log_x`: log x axis; `y_min`: lower end of the y axis, to zoom in on high fractions."""
     _, fin = select(df, schedulers)
     group = ["case", "resource", "scheduler"]
     d = pl.concat(
@@ -367,7 +374,7 @@ def profile(
     ends = d.group_by(group).agg(
         pl.col("lo", "hi").first(), pl.col("y").max().fill_null(0)
     )
-    return _profile(d.drop_nulls("x"), ends, fin, log_x) + p9.labs(
+    return _profile(d.drop_nulls("x"), ends, fin, log_x, y_min) + p9.labs(
         x="",
         y="runs at best known cost",
         title="Reaching the best known cost",
