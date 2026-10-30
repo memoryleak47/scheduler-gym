@@ -2,3 +2,4 @@ benchdata
 .direnv
 figures/
 __pycache__/
+.venv/
