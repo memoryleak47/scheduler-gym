@@ -32,14 +32,14 @@ def setup_style():
     mpl.rcParams["pdf.fonttype"] = 42
     p9.theme_set(
         p9.theme_minimal(base_size=8)
-        # + p9.theme(
-        #     panel_grid_minor=p9.element_blank(),
-        #     strip_text=p9.element_text(size=9, weight="bold", ha="left"),
-        #     legend_title=p9.element_blank(),
-        #     plot_title=p9.element_text(size=11, weight="bold", ha="left"),
-        #     plot_title_position="plot",
-        #     dpi=110,
-        # )
+        + p9.theme(
+            #     panel_grid_minor=p9.element_blank(),
+            #     strip_text=p9.element_text(size=9, weight="bold", ha="left"),
+            #     legend_title=p9.element_blank(),
+            #     plot_title=p9.element_text(size=11, weight="bold", ha="left"),
+            #     plot_title_position="plot",
+            dpi=110,
+        )
     )
 
 
@@ -135,12 +135,12 @@ def _facets(by: str, n: int, scales: Literal["free", "free_x"]) -> p9.facet_wrap
     )
 
 
-def _steps(d: pl.DataFrame, y: str) -> p9.ggplot:
-    """One step line per scheduler of `y` over `x` (log scale)."""
+def _steps(d: pl.DataFrame, y: str, log: bool) -> p9.ggplot:
+    """One step line per scheduler of `y` over `x`, on a log scale if `log`."""
     return (
         p9.ggplot(d, p9.aes("x", y, color="scheduler"))
         + p9.geom_step(size=0.8)
-        + p9.scale_x_log10()
+        + (p9.scale_x_log10() if log else p9.scale_x_continuous())
         + p9.scale_color_hue()
     )
 
@@ -213,8 +213,8 @@ def sums(df: pl.DataFrame, schedulers: Sequence[Scheduler] = SCHEDULERS) -> p9.g
 def solved(
     df: pl.DataFrame,
     schedulers: Sequence[Scheduler] = SCHEDULERS,
-    case: str = "caviar",
     *,
+    case: str = "caviar",
     solved_cost: float = 1,
 ) -> p9.ggplot:
     """Number of runs per scheduler that ended at `solved_cost`, i.e. proved the goal."""
@@ -237,7 +237,10 @@ def solved(
 
 
 def profile(
-    df: pl.DataFrame, schedulers: Sequence[Scheduler] = SCHEDULERS
+    df: pl.DataFrame,
+    schedulers: Sequence[Scheduler] = SCHEDULERS,
+    *,
+    log: bool = False,
 ) -> p9.ggplot:
     """Fraction of runs where a scheduler reached the best known cost within the given resource.
     Each curve starts at 0 at the smallest resource any scheduler needed and is extended to
@@ -269,7 +272,7 @@ def profile(
         ]
     ).sort("x", maintain_order=True)
     return (
-        _steps(_titled(curves, fin), "y")
+        _steps(_titled(curves, fin), "y", log)
         + _facets("resource", len(RESOURCES), "free_x")
         + p9.coord_cartesian(ylim=(0, 1))
         + p9.labs(
@@ -290,14 +293,13 @@ def _relative(df: pl.DataFrame, fin: pl.DataFrame, metric: Metric) -> pl.DataFra
     )
 
 
-def _log_grid(d: pl.DataFrame, by: list[str], n: int = 300) -> pl.DataFrame:
-    """`n` log-spaced `x` per group of `by`, spanning that group's `x`."""
-    return (
-        d.group_by(by)
-        .agg(x=pl.linear_spaces(pl.col("x").min().log(), pl.col("x").max().log(), n))
-        .explode("x")
-        .with_columns(pl.col("x").exp())
-    )
+def _grid(d: pl.DataFrame, by: list[str], log: bool, n: int = 300) -> pl.DataFrame:
+    """`n` evenly spaced `x` per group of `by`, spanning that group's `x`; log-spaced if `log`."""
+    lo, hi = pl.col("x").min(), pl.col("x").max()
+    if log:
+        lo, hi = lo.log(), hi.log()
+    grid = d.group_by(by).agg(x=pl.linear_spaces(lo, hi, n)).explode("x")
+    return grid.with_columns(pl.col("x").exp()) if log else grid
 
 
 def _geomean_curves(d: pl.DataFrame, by: list[str], grid: pl.DataFrame) -> pl.DataFrame:
@@ -317,7 +319,10 @@ def _geomean_curves(d: pl.DataFrame, by: list[str], grid: pl.DataFrame) -> pl.Da
 
 
 def quality(
-    df: pl.DataFrame, schedulers: Sequence[Scheduler] = SCHEDULERS
+    df: pl.DataFrame,
+    schedulers: Sequence[Scheduler] = SCHEDULERS,
+    *,
+    log: bool = False,
 ) -> p9.ggplot:
     """Cost relative to the best final cost of each run over resource, geometric mean over all runs.
     The resource is the running maximum, since the e-graph size can shrink."""
@@ -333,11 +338,11 @@ def quality(
         for r, label in RESOURCES.items()
     )
     by = ["case", "resource"]
-    curves = _titled(_geomean_curves(d, by, _log_grid(d, by)), fin)
+    curves = _titled(_geomean_curves(d, by, _grid(d, by, log)), fin)
     return (
-        _steps(curves, "rel")
+        _steps(curves, "rel", log)
         + _facets("resource", len(RESOURCES), "free")
-        + p9.scale_y_log10()
+        + (p9.scale_y_log10() if log else p9.scale_y_continuous())
         + p9.labs(
             x="",
             y="cost / best final cost (geomean)",
@@ -348,7 +353,9 @@ def quality(
     )
 
 
-def dev(df: pl.DataFrame, schedulers: Sequence[Scheduler] = SCHEDULERS) -> p9.ggplot:
+def dev(
+    df: pl.DataFrame, schedulers: Sequence[Scheduler] = SCHEDULERS, *, log: bool = False
+) -> p9.ggplot:
     """Cost, time and size per iteration relative to the smallest final value of each run,
     geometric mean over all runs."""
     df, fin = select(df, schedulers)
@@ -362,12 +369,12 @@ def dev(df: pl.DataFrame, schedulers: Sequence[Scheduler] = SCHEDULERS) -> p9.gg
         for m, label in METRICS.items()
     )
     by = ["case", "metric"]
-    grid = _log_grid(d, by).with_columns(pl.col("x").round()).unique()
+    grid = _grid(d, by, log).with_columns(pl.col("x").round()).unique()
     curves = _titled(_geomean_curves(d, by, grid), fin)
     return (
-        _steps(curves, "rel")
+        _steps(curves, "rel", log)
         + _facets("metric", len(METRICS), "free")
-        + p9.scale_y_log10()
+        + (p9.scale_y_log10() if log else p9.scale_y_continuous())
         + p9.labs(
             x="iteration",
             y="value / smallest final value (geomean)",
