@@ -31,8 +31,9 @@ ENTRY_RE = re.compile(
 def setup_style():
     mpl.rcParams["pdf.fonttype"] = 42
     p9.theme_set(
-        p9.theme_minimal(base_size=8)
+        p9.theme_minimal()
         + p9.theme(
+            panel_grid_minor=p9.element_line(color="#EBEBEB", size=0.5),
             #     panel_grid_minor=p9.element_blank(),
             #     strip_text=p9.element_text(size=9, weight="bold", ha="left"),
             #     legend_title=p9.element_blank(),
