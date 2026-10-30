@@ -147,18 +147,28 @@ def _stars(d: pl.DataFrame, by: list[str], y: str) -> pl.DataFrame:
 
 
 def _steps(
-    d: pl.DataFrame, y: str, log: bool, stars: pl.DataFrame | None = None
+    d: pl.DataFrame, y: str, by: list[str], log: bool, star_if: pl.Expr | bool = True
 ) -> p9.ggplot:
-    """Step lines of `y` over `x` per scheduler, with a star at each row of `stars`."""
-    plot = (
+    """Step lines of `y` over `x` per group of `by` and scheduler, with a star where
+    each curve reaches its final value (only for the stars matching `star_if`)."""
+    stars = _stars(d, by, y).filter(star_if)
+    return (
         p9.ggplot(d, p9.aes("x", y, color="scheduler"))
         + p9.geom_step(size=0.8)
+        # filled in the curve's color, with a black edge to stand out from the curve
+        + p9.geom_point(
+            p9.aes(fill="scheduler"),
+            data=stars,
+            shape="*",
+            size=6,
+            color="black",
+            stroke=0.3,
+            show_legend=False,
+        )
         + (p9.scale_x_log10() if log else p9.scale_x_continuous())
         + p9.scale_color_hue()
+        + p9.scale_fill_hue()
     )
-    if stars is not None:
-        plot += p9.geom_point(data=stars, shape="*", size=4, show_legend=False)
-    return plot
 
 
 def _bars(d: pl.DataFrame, value: str, fmt: str, *, base: float = 0) -> p9.ggplot:
@@ -266,7 +276,7 @@ def _per_resource(df: pl.DataFrame, *cols: str) -> pl.DataFrame:
 
 
 def _profile(
-    points: pl.DataFrame, ends: pl.DataFrame, fin: pl.DataFrame, log: bool, stars: bool
+    points: pl.DataFrame, ends: pl.DataFrame, fin: pl.DataFrame, log: bool
 ) -> p9.ggplot:
     """Step curves from 0 at `lo` through `points` to `hi`, per case, resource and scheduler."""
     group = ["case", "resource", "scheduler"]
@@ -278,10 +288,9 @@ def _profile(
         ]
     ).sort("x", maintain_order=True)
     curves = _titled(curves, fin)
-    # curves that stay at 0 get no star
-    marks = _stars(curves, ["case", "resource"], "y").filter(pl.col("y") > 0)
     return (
-        _steps(curves, "y", log, marks if stars else None)
+        # curves that stay at 0 get no star
+        _steps(curves, "y", ["case", "resource"], log, pl.col("y") > 0)
         + _facets("resource", len(RESOURCES), "free_x")
         + p9.coord_cartesian(ylim=(0, 1))
     )
@@ -294,10 +303,9 @@ def solved_profile(
     case: str = "caviar",
     solved_cost: float = 1,
     log: bool = False,
-    stars: bool = True,
 ) -> p9.ggplot:
     """Fraction of runs per scheduler that reached `solved_cost` within a resource budget.
-    `log`: log x axis; `stars`: mark each scheduler's last proof."""
+    `log`: log x axis."""
     df, fin = select(df.filter(pl.col("case") == case), schedulers)
     group = ["case", "resource", "scheduler"]
     d = _per_resource(df, "cost")
@@ -321,12 +329,13 @@ def solved_profile(
         .join(proofs.group_by(group).agg(pl.col("y").max()), on=group, how="left")
         .with_columns(pl.col("y").fill_null(0))
     )
-    return _profile(proofs, ends, fin, log, stars) + p9.labs(
+    return _profile(proofs, ends, fin, log) + p9.labs(
         x="",
         y="runs with a proof",
         title=f"{case}: proving the goal",
         subtitle="fraction of runs that proved the goal within a time / e-graph size"
-        " budget;\na curve ends at the most its scheduler used; higher is better",
+        " budget;\na curve ends at the most its scheduler used, ★ marks its last proof;"
+        " higher is better",
     )
 
 
@@ -335,10 +344,9 @@ def profile(
     schedulers: Sequence[Scheduler] = SCHEDULERS,
     *,
     log: bool = False,
-    stars: bool = True,
 ) -> p9.ggplot:
     """Fraction of runs per scheduler that reached the best known cost within a resource budget.
-    `log`: log x axis; `stars`: mark where each curve stops rising."""
+    `log`: log x axis."""
     _, fin = select(df, schedulers)
     group = ["case", "resource", "scheduler"]
     d = pl.concat(
@@ -358,12 +366,13 @@ def profile(
     ends = d.group_by(group).agg(
         pl.col("lo", "hi").first(), pl.col("y").max().fill_null(0)
     )
-    return _profile(d.drop_nulls("x"), ends, fin, log, stars) + p9.labs(
+    return _profile(d.drop_nulls("x"), ends, fin, log) + p9.labs(
         x="",
         y="runs at best known cost",
         title="Reaching the best known cost",
         subtitle="fraction of runs that reached the best final cost of any scheduler"
-        " within a time / e-graph size budget; higher is better",
+        " within a time / e-graph size budget;\n★ marks where a curve stops rising;"
+        " higher is better",
     )
 
 
@@ -409,17 +418,15 @@ def quality(
     *,
     log: bool = False,
     absolute: bool = False,
-    stars: bool = True,
 ) -> p9.ggplot:
     """Geomean over runs of the cost relative to the run's best final cost, over resource.
-    `log`: log axes; `absolute`: plain cost (only the y scale changes);
-    `stars`: mark where each curve stops improving."""
+    `log`: log axes; `absolute`: plain cost (only the y scale changes)."""
     df, fin = select(df, schedulers)
     d = _per_resource(_relative(df, fin, "cost", absolute), "rel")
     by = ["case", "resource"]
     curves = _titled(_geomean_curves(d, by, _grid(d, by, log)), fin)
     return (
-        _steps(curves, "rel", log, _stars(curves, by, "rel") if stars else None)
+        _steps(curves, "rel", by, log)
         + _facets("resource", len(RESOURCES), "free")
         + (p9.scale_y_log10() if log else p9.scale_y_continuous())
         + p9.labs(
@@ -431,7 +438,8 @@ def quality(
                 if absolute
                 else "cost relative to the best final cost of each run"
             )
-            + ", geometric mean over runs; lower is better",
+            + ", geometric mean over runs;\n★ marks where a curve stops improving;"
+            " lower is better",
         )
     )
 
@@ -442,11 +450,9 @@ def dev(
     *,
     log: bool = False,
     absolute: bool = False,
-    stars: bool = True,
 ) -> p9.ggplot:
     """Geomean over runs of cost, time and size relative to the run's smallest final value.
-    `log`: log axes; `absolute`: plain values (only the y scale changes);
-    `stars`: mark where the cost stops improving."""
+    `log`: log axes; `absolute`: plain values (only the y scale changes)."""
     df, fin = select(df, schedulers)
     d = pl.concat(
         _relative(df, fin, m, absolute).select(
@@ -460,10 +466,9 @@ def dev(
     by = ["case", "metric"]
     grid = _grid(d, by, log).with_columns(pl.col("x").round()).unique()
     curves = _titled(_geomean_curves(d, by, grid), fin)
-    # time and size only grow, so only the cost gets stars
-    cost = curves.filter(pl.col("metric") == METRICS["cost"])
     return (
-        _steps(curves, "rel", log, _stars(cost, by, "rel") if stars else None)
+        # time and size only grow, so only the cost gets stars
+        _steps(curves, "rel", by, log, pl.col("metric") == METRICS["cost"])
         + _facets("metric", len(METRICS), "free")
         + (p9.scale_y_log10() if log else p9.scale_y_continuous())
         + p9.labs(
@@ -474,6 +479,7 @@ def dev(
             title="Development per iteration",
             subtitle="cost, time and e-graph size"
             + ("" if absolute else " relative to the smallest final value of each run")
-            + ", geometric mean over runs; lower is better",
+            + ", geometric mean over runs;\n★ marks where the cost stops improving;"
+            " lower is better",
         )
     )
