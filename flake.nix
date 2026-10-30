@@ -30,22 +30,11 @@
           "clippy"
           "rust-analyzer"
         ];
-
-        python = pkgs.python3.withPackages (
-          ps: with ps; [
-            matplotlib
-            numpy
-            polars
-            jupyter
-            ipykernel
-          ]
-        );
       in
       {
         devShells.default = pkgs.mkShell {
           nativeBuildInputs = [
             toolchain
-            python
           ]
           ++ (with pkgs; [
             gnumake
@@ -54,6 +43,7 @@
             nixfmt
             ruff
             ty
+            uv
           ]);
 
           # szalinski's default make target converts inputs with openscad.
