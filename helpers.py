@@ -7,7 +7,7 @@ import matplotlib as mpl
 import plotnine as p9
 import polars as pl
 
-from gym import Scheduler
+from gym import SCHEDULERS, Scheduler
 
 ROOT = Path(__file__).resolve().parent
 BENCHDATA = ROOT / "benchdata"
@@ -51,14 +51,11 @@ def save(plot: p9.ggplot, name: str, size: tuple[float, float]) -> p9.ggplot:
     return plot
 
 
-def load(schedulers: Sequence[Scheduler], *, root: Path = BENCHDATA) -> pl.DataFrame:
-    """One row per entry of `schedulers`; `run` numbers the runs within a file. Unfinished trailing runs are dropped.
-    `scheduler` is ordered as given, which fixes the order and colors of the schedulers in all figures."""
+def load(root: Path = BENCHDATA) -> pl.DataFrame:
+    """One row per entry of every scheduler; `run` numbers the runs within a file. Unfinished trailing runs are dropped."""
     rows = []
     for path in sorted(root.glob("*/*.entries")):
         case, scheduler = path.stem, path.parent.name.removesuffix(".rs")
-        if scheduler not in schedulers:
-            continue
         run, pending = 0, []
         for line in path.read_text().splitlines():
             m = ENTRY_RE.search(line)
@@ -73,7 +70,18 @@ def load(schedulers: Sequence[Scheduler], *, root: Path = BENCHDATA) -> pl.DataF
                 run, pending = run + 1, []
     schema = [*KEY, "iteration", "cost", "size", "time"]
     df = pl.DataFrame(rows, schema=schema, orient="row")
-    return df.with_columns(pl.col("scheduler").cast(pl.Enum(schedulers)))
+    return df.with_columns(pl.col("scheduler").cast(pl.Enum(SCHEDULERS)))
+
+
+def select(
+    df: pl.DataFrame, schedulers: Sequence[Scheduler] = SCHEDULERS
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """The rows of `df` for `schedulers` and their `finals`, so the best is the best of `schedulers`.
+    `scheduler` is ordered as given, which fixes the order and colors of the schedulers in a figure."""
+    df = df.filter(pl.col("scheduler").is_in(schedulers)).with_columns(
+        pl.col("scheduler").cast(pl.String).cast(pl.Enum(schedulers))
+    )
+    return df, finals(df)
 
 
 def finals(df: pl.DataFrame) -> pl.DataFrame:
@@ -91,8 +99,9 @@ def finals(df: pl.DataFrame) -> pl.DataFrame:
     return last.join(reached, on=KEY, how="left")
 
 
-def check_runs(fin: pl.DataFrame):
-    """Print the cases where the schedulers have a different number of finished runs."""
+def check_runs(df: pl.DataFrame, schedulers: Sequence[Scheduler] = SCHEDULERS):
+    """Print the cases where `schedulers` have a different number of finished runs."""
+    _, fin = select(df, schedulers)
     counts = fin.group_by("case", "scheduler").len()
     for (case,), g in counts.group_by("case"):
         if g["len"].n_unique() > 1:
@@ -162,8 +171,11 @@ def _bars(d: pl.DataFrame, value: str, fmt: str, *, base: float = 0) -> p9.ggplo
     )
 
 
-def ranking(fin: pl.DataFrame) -> p9.ggplot:
+def ranking(
+    df: pl.DataFrame, schedulers: Sequence[Scheduler] = SCHEDULERS
+) -> p9.ggplot:
     """Geometric mean of final cost relative to the best scheduler per run (1 = always best)."""
+    _, fin = select(df, schedulers)
     d = fin.group_by("case", "scheduler").agg(
         ratio=_geomean(pl.col("cost") / pl.col("best"))
     )
@@ -178,8 +190,9 @@ def ranking(fin: pl.DataFrame) -> p9.ggplot:
     )
 
 
-def sums(fin: pl.DataFrame) -> p9.ggplot:
+def sums(df: pl.DataFrame, schedulers: Sequence[Scheduler] = SCHEDULERS) -> p9.ggplot:
     """Sum of the final cost, time and size over all runs, like dump.py's dumpall."""
+    _, fin = select(df, schedulers)
     d = pl.concat(
         fin.group_by("case", "scheduler").agg(
             metric=pl.lit(label, METRIC), total=pl.col(m).sum()
@@ -197,8 +210,15 @@ def sums(fin: pl.DataFrame) -> p9.ggplot:
     )
 
 
-def solved(fin: pl.DataFrame, case: str = "caviar", *, solved_cost: float = 1):
+def solved(
+    df: pl.DataFrame,
+    schedulers: Sequence[Scheduler] = SCHEDULERS,
+    case: str = "caviar",
+    *,
+    solved_cost: float = 1,
+) -> p9.ggplot:
     """Number of runs per scheduler that ended at `solved_cost`, i.e. proved the goal."""
+    _, fin = select(df, schedulers)
     d = (
         fin.filter(pl.col("case") == case)
         .group_by("case", "scheduler")
@@ -216,10 +236,13 @@ def solved(fin: pl.DataFrame, case: str = "caviar", *, solved_cost: float = 1):
     )
 
 
-def profile(fin: pl.DataFrame) -> p9.ggplot:
+def profile(
+    df: pl.DataFrame, schedulers: Sequence[Scheduler] = SCHEDULERS
+) -> p9.ggplot:
     """Fraction of runs where a scheduler reached the best known cost within the given resource.
     Each curve starts at 0 at the smallest resource any scheduler needed and is extended to
     the largest resource any scheduler used."""
+    _, fin = select(df, schedulers)
     group = ["case", "resource", "scheduler"]
     d = pl.concat(
         fin.select(
@@ -293,9 +316,12 @@ def _geomean_curves(d: pl.DataFrame, by: list[str], grid: pl.DataFrame) -> pl.Da
     )
 
 
-def quality(df: pl.DataFrame, fin: pl.DataFrame) -> p9.ggplot:
+def quality(
+    df: pl.DataFrame, schedulers: Sequence[Scheduler] = SCHEDULERS
+) -> p9.ggplot:
     """Cost relative to the best final cost of each run over resource, geometric mean over all runs.
     The resource is the running maximum, since the e-graph size can shrink."""
+    df, fin = select(df, schedulers)
     rel = _relative(df, fin, "cost")
     d = pl.concat(
         rel.select(
@@ -322,9 +348,10 @@ def quality(df: pl.DataFrame, fin: pl.DataFrame) -> p9.ggplot:
     )
 
 
-def dev(df: pl.DataFrame, fin: pl.DataFrame) -> p9.ggplot:
+def dev(df: pl.DataFrame, schedulers: Sequence[Scheduler] = SCHEDULERS) -> p9.ggplot:
     """Cost, time and size per iteration relative to the smallest final value of each run,
     geometric mean over all runs."""
+    df, fin = select(df, schedulers)
     d = pl.concat(
         _relative(df, fin, m).select(
             *KEY,
