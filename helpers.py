@@ -285,8 +285,13 @@ def profile(
     )
 
 
-def _relative(df: pl.DataFrame, fin: pl.DataFrame, metric: Metric) -> pl.DataFrame:
-    """`df` with `rel` = `metric` / the smallest final `metric` of any scheduler on that run."""
+def _relative(
+    df: pl.DataFrame, fin: pl.DataFrame, metric: Metric, absolute: bool = False
+) -> pl.DataFrame:
+    """`df` with `rel` = `metric` / the smallest final `metric` of any scheduler on that run,
+    or just `metric` if `absolute`."""
+    if absolute:
+        return df.with_columns(rel=pl.col(metric))
     best = fin.group_by("case", "run").agg(best=pl.col(metric).min())
     return df.join(best, on=["case", "run"]).with_columns(
         rel=pl.col(metric) / pl.col("best")
@@ -323,11 +328,13 @@ def quality(
     schedulers: Sequence[Scheduler] = SCHEDULERS,
     *,
     log: bool = False,
+    absolute: bool = False,
 ) -> p9.ggplot:
     """Cost relative to the best final cost of each run over resource, geometric mean over all runs.
-    The resource is the running maximum, since the e-graph size can shrink."""
+    The resource is the running maximum, since the e-graph size can shrink.
+    If `absolute`, the plain cost instead, which only changes the y axis labels."""
     df, fin = select(df, schedulers)
-    rel = _relative(df, fin, "cost")
+    rel = _relative(df, fin, "cost", absolute)
     d = pl.concat(
         rel.select(
             *KEY,
@@ -345,22 +352,31 @@ def quality(
         + (p9.scale_y_log10() if log else p9.scale_y_continuous())
         + p9.labs(
             x="",
-            y="cost / best final cost (geomean)",
+            y="cost (geomean)" if absolute else "cost / best final cost (geomean)",
             title="Cost over time and e-graph size",
-            subtitle="cost relative to the best final cost of each run,"
-            " geometric mean over runs; lower is better",
+            subtitle=(
+                "cost"
+                if absolute
+                else "cost relative to the best final cost of each run"
+            )
+            + ", geometric mean over runs; lower is better",
         )
     )
 
 
 def dev(
-    df: pl.DataFrame, schedulers: Sequence[Scheduler] = SCHEDULERS, *, log: bool = False
+    df: pl.DataFrame,
+    schedulers: Sequence[Scheduler] = SCHEDULERS,
+    *,
+    log: bool = False,
+    absolute: bool = False,
 ) -> p9.ggplot:
     """Cost, time and size per iteration relative to the smallest final value of each run,
-    geometric mean over all runs."""
+    geometric mean over all runs. If `absolute`, the plain values instead, which only
+    changes the y axis labels."""
     df, fin = select(df, schedulers)
     d = pl.concat(
-        _relative(df, fin, m).select(
+        _relative(df, fin, m, absolute).select(
             *KEY,
             "rel",
             metric=pl.lit(label, METRIC),
@@ -377,9 +393,12 @@ def dev(
         + (p9.scale_y_log10() if log else p9.scale_y_continuous())
         + p9.labs(
             x="iteration",
-            y="value / smallest final value (geomean)",
+            y="value (geomean)"
+            if absolute
+            else "value / smallest final value (geomean)",
             title="Development per iteration",
-            subtitle="cost, time and e-graph size relative to the smallest final value"
-            " of each run, geometric mean over runs; lower is better",
+            subtitle="cost, time and e-graph size"
+            + ("" if absolute else " relative to the smallest final value of each run")
+            + ", geometric mean over runs; lower is better",
         )
     )
