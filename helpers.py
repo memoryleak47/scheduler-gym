@@ -1,15 +1,12 @@
 import re
-from collections.abc import Collection, Sequence
-from itertools import chain, repeat
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
 import matplotlib as mpl
-import numpy as np
+import plotnine as p9
 import polars as pl
-from matplotlib.colors import LinearSegmentedColormap
 
-from gym import SCHEDULERS as ALL_SCHEDULERS
 from gym import Scheduler
 
 ROOT = Path(__file__).resolve().parent
@@ -21,123 +18,72 @@ Resource = Literal["time", "size"]
 Metric = Literal["cost", "time", "size"]
 
 RESOURCES: dict[Resource, str] = {"time": "time [s]", "size": "e-graph size"}
-
-INK = "#0b0b0b"
-INK_2 = "#52514e"
-MUTED = "#898781"
-GRID = "#e1e0d9"
-BASELINE = "#c3c2b7"
-SURFACE = "#fcfcfb"
-NEUTRAL = "#f0efec"
-PALETTE = (
-    "#2a78d6",
-    "#eb6834",
-    "#1baf7a",
-    "#eda100",
-    "#e87ba4",
-    "#008300",
-    "#6250d6",
-    "#e34948",
-)
-
-# the shown schedulers and their colors, fixed so a scheduler looks the same in every figure.
-# only ever updated in place, since the plot functions use it as their default argument
-SCHEDULERS: dict[Scheduler, str] = {}
-
-
-def select(schedulers: Sequence[Scheduler]):
-    """Show only `schedulers`, colored in this order (the palette has 8 colors, the rest are gray)."""
-    SCHEDULERS.clear()
-    SCHEDULERS.update(zip(schedulers, chain(PALETTE, repeat(MUTED))))
-
-
-select(ALL_SCHEDULERS)
-DIVERGING = LinearSegmentedColormap.from_list("wins", [PALETTE[7], NEUTRAL, PALETTE[0]])
+METRICS: dict[Metric, str] = {"cost": "cost", **RESOURCES}
+# the labels as ordered categories, so facets come in this order
+RESOURCE = pl.Enum(RESOURCES.values())
+METRIC = pl.Enum(METRICS.values())
 
 ENTRY_RE = re.compile(
     r"costs=\[([^\]]*)\], total_size=(\S+), time=(\S+), iteration=(\d+), stop=(.*)$"
 )
+COLUMNS = ("case", "scheduler", "run", "iteration", "cost", "size", "time", "stop")
 
 
 def setup_style():
-    mpl.rcParams.update(
-        {
-            "figure.facecolor": SURFACE,
-            "axes.facecolor": SURFACE,
-            "savefig.facecolor": SURFACE,
-            "axes.edgecolor": BASELINE,
-            "axes.labelcolor": INK_2,
-            "axes.titlecolor": INK,
-            "axes.titlesize": 11,
-            "axes.titleweight": "bold",
-            "axes.titlelocation": "left",
-            "axes.labelsize": 9,
-            "axes.spines.top": False,
-            "axes.spines.right": False,
-            "axes.grid": True,
-            "axes.axisbelow": True,
-            "grid.color": GRID,
-            "grid.linewidth": 0.6,
-            "xtick.color": MUTED,
-            "ytick.color": MUTED,
-            "xtick.labelcolor": INK_2,
-            "ytick.labelcolor": INK_2,
-            "xtick.labelsize": 8,
-            "ytick.labelsize": 8,
-            "lines.linewidth": 2,
-            "legend.frameon": False,
-            "legend.fontsize": 8,
-            "figure.dpi": 110,
-            "pdf.fonttype": 42,
-        }
+    mpl.rcParams["pdf.fonttype"] = 42
+    p9.theme_set(
+        p9.theme_minimal(base_size=8)
+        # + p9.theme(
+        #     panel_grid_minor=p9.element_blank(),
+        #     strip_text=p9.element_text(size=9, weight="bold", ha="left"),
+        #     legend_title=p9.element_blank(),
+        #     plot_title=p9.element_text(size=11, weight="bold", ha="left"),
+        #     plot_title_position="plot",
+        #     dpi=110,
+        # )
     )
 
 
-def save(fig, name: str):
+def save(plot: p9.ggplot, name: str, size: tuple[float, float]) -> p9.ggplot:
+    """Write `plot` to figures/`name`.pdf and return it for display."""
+    plot += p9.theme(figure_size=size)
     FIGURES.mkdir(exist_ok=True)
-    fig.savefig(FIGURES / f"{name}.pdf", bbox_inches="tight")
+    plot.save(FIGURES / f"{name}.pdf", verbose=False)
+    return plot
 
 
-def legend(fig):
-    """One legend for all axes of `fig`, outside on the right."""
-    handles = {}
-    for ax in fig.axes:
-        for h, label in zip(*ax.get_legend_handles_labels()):
-            handles.setdefault(label, h)
-    labels = [s for s in SCHEDULERS if s in handles]
-    fig.legend([handles[s] for s in labels], labels, loc="outside right upper")
+def _parse(line: str) -> tuple:
+    """(iteration, cost, size, time, stop) of one entry; `stop` is None unless the entry ends a run."""
+    m = ENTRY_RE.search(line)
+    assert m
+    costs, size, time, iteration, stop = m.groups()
+    stop = stop.strip()
+    return (
+        int(iteration),
+        sum(float(c) for c in costs.split(", ")),
+        float(size),
+        float(time),
+        None if stop == "None" else stop,
+    )
 
 
-def load(*, root: Path = BENCHDATA) -> pl.DataFrame:
-    """One row per entry; `run` numbers the runs within a file. Unfinished trailing runs are dropped."""
+def load(schedulers: Sequence[Scheduler], *, root: Path = BENCHDATA) -> pl.DataFrame:
+    """One row per entry of `schedulers`; `run` numbers the runs within a file. Unfinished trailing runs are dropped.
+    `scheduler` is ordered as given, which fixes the order and colors of the schedulers in all figures."""
     rows = []
     for path in sorted(root.glob("*/*.entries")):
-        run, file_rows = 0, []
+        case, scheduler = path.stem, path.parent.name.removesuffix(".rs")
+        if scheduler not in schedulers:
+            continue
+        run, pending = 0, []
         for line in path.read_text().splitlines():
-            m = ENTRY_RE.search(line)
-            if m is None:
-                raise ValueError(f"{path}: malformed entry {line!r}")
-            costs, size, time, iteration, stop = m.groups()
-            stop = stop.strip()
-            file_rows.append(
-                (
-                    path.stem,
-                    path.parent.name.removesuffix(".rs"),
-                    run,
-                    int(iteration),
-                    sum(float(c) for c in costs.split(", ")),
-                    float(size),
-                    float(time),
-                    None if stop == "None" else stop,
-                )
-            )
-            if stop != "None":
-                run += 1
-                rows += file_rows
-                file_rows = []
-
-    schema = ("case", "scheduler", "run", "iteration", "cost", "size", "time", "stop")
-    return pl.DataFrame(rows, schema=schema, orient="row")
+            entry = _parse(line)
+            pending.append((case, scheduler, run, *entry))
+            if entry[-1] is not None:
+                rows += pending
+                run, pending = run + 1, []
+    df = pl.DataFrame(rows, schema=COLUMNS, orient="row", infer_schema_length=None)
+    return df.with_columns(pl.col("scheduler").cast(pl.Enum(schedulers)))
 
 
 def finals(df: pl.DataFrame) -> pl.DataFrame:
@@ -156,6 +102,7 @@ def finals(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def check_runs(fin: pl.DataFrame):
+    """Print the cases where the schedulers have a different number of finished runs."""
     counts = fin.group_by("case", "scheduler").len()
     for (case,), g in counts.group_by("case"):
         if g["len"].n_unique() > 1:
@@ -163,185 +110,275 @@ def check_runs(fin: pl.DataFrame):
             print(g.sort("len").select("scheduler", "len"))
 
 
-def _bars(ax, labels: pl.Series, values: pl.Series, fmt: str, *, left: float = 0):
-    """Horizontal bars from `left` to `values`, each labelled with its value."""
-    y = np.arange(len(values))
-    ax.barh(y, values - left, left=left, height=0.6, color=PALETTE[0])
-    ax.set_yticks(y, labels)
-    for yi, v in zip(y, values):
-        ax.annotate(
-            format(v, fmt),
-            (v, yi),
-            xytext=(4, 0),
-            textcoords="offset points",
-            va="center",
-            fontsize=8,
-            color=INK_2,
+def _geomean(e: pl.Expr) -> pl.Expr:
+    return e.log().mean().exp()
+
+
+def _steps(d: pl.DataFrame, y: str, facets: list[str], **kwargs) -> p9.ggplot:
+    """One step line per scheduler of `y` over `x` (log scale), one panel per combination of `facets`."""
+    return (
+        p9.ggplot(d, p9.aes("x", y, color="scheduler"))
+        + p9.geom_step(size=0.8)
+        # plotnine annotates `labeller` too narrowly, facet accepts any labeller
+        + p9.facet_wrap(
+            facets,
+            labeller=p9.labeller(multi_line=False),  # ty: ignore[invalid-argument-type]
+            **kwargs,
         )
-    ax.grid(axis="y", visible=False)
+        + p9.scale_x_log10()
+        + p9.scale_color_hue()
+    )
 
 
-def plot_ranking(fin: pl.DataFrame, case: str, ax):
+def _titled(d: pl.DataFrame, fin: pl.DataFrame) -> pl.DataFrame:
+    """`d` with `title` = case and its number of runs, for facet labels."""
+    runs = fin.group_by("case").agg(
+        title=pl.format(
+            "{} ({} runs)", pl.col("case").first(), pl.col("run").n_unique()
+        )
+    )
+    return d.join(runs, on="case")
+
+
+def _bars(d: pl.DataFrame, value: str, fmt: str, *, base: float = 0) -> p9.ggplot:
+    """Horizontal bars per scheduler from `base` to `value`, each labelled with its value."""
+    dtype = d["scheduler"].dtype
+    assert isinstance(dtype, pl.Enum)
+    top_down = dtype.categories.reverse().to_list()
+    d = d.with_columns(base=pl.lit(base))
+    return (
+        p9.ggplot(d, p9.aes(y="scheduler", x="base", xend=value, color="scheduler"))
+        + p9.geom_segment(p9.aes(yend="scheduler"), size=4)
+        + p9.geom_text(
+            p9.aes(x=value, label=value),
+            format_string=f" {{:{fmt}}}",
+            ha="left",
+            size=7,
+        )
+        + p9.scale_x_continuous(
+            labels=lambda xs: [f"{x:.3g}" for x in xs], expand=(0, 0, 0.25, 0)
+        )
+        + p9.scale_y_discrete(limits=top_down)
+        + p9.scale_color_hue()
+        + p9.guides(color="none")
+        + p9.labs(y="")
+        + p9.theme(panel_grid_major_y=p9.element_blank())
+    )
+
+
+def ranking(fin: pl.DataFrame) -> p9.ggplot:
     """Geometric mean of final cost relative to the best scheduler per run (1 = always best)."""
+    d = fin.group_by("case", "scheduler").agg(
+        ratio=_geomean(pl.col("cost") / pl.col("best"))
+    )
+    return (
+        _bars(_titled(d, fin), "ratio", ".3f", base=1)
+        + p9.facet_wrap("title", nrow=1, scales="free")
+        + p9.labs(
+            x="final cost / best final cost (geomean)",
+            title="Final cost relative to the best scheduler",
+            subtitle="geometric mean over runs, 1 = always the best; lower is better",
+        )
+    )
+
+
+def sums(fin: pl.DataFrame) -> p9.ggplot:
+    """Sum of the final cost, time and size over all runs, like dump.py's dumpall."""
+    d = (
+        fin.unpivot(list(METRICS), index=["case", "scheduler"], variable_name="metric")
+        .group_by("case", "scheduler", "metric")
+        .agg(total=pl.col("value").sum())
+        .with_columns(pl.col("metric").replace_strict(METRICS, return_dtype=METRIC))
+    )
+    return (
+        _bars(_titled(d, fin), "total", ".4g")
+        + p9.facet_wrap(
+            ["title", "metric"],
+            nrow=len(METRICS),
+            dir="v",
+            scales="free",
+            labeller=p9.labeller(multi_line=False),  # ty: ignore[invalid-argument-type]
+        )
+        + p9.labs(
+            x="total final value",
+            title="Totals over all runs",
+            subtitle="sum of the final cost, time and e-graph size; lower is better",
+        )
+    )
+
+
+def solved(fin: pl.DataFrame, case: str = "caviar", *, solved_cost: float = 1):
+    """Number of runs per scheduler that ended at `solved_cost`, i.e. proved the goal."""
     d = (
         fin.filter(pl.col("case") == case)
-        .group_by("scheduler")
-        .agg(ratio=(pl.col("cost") / pl.col("best")).log().mean().exp(), runs=pl.len())
-        .sort("ratio", descending=True)
-    )
-    _bars(ax, d["scheduler"], d["ratio"], ".3f", left=1)
-    ax.set_xlim(left=1)
-    ax.set_xlabel("final cost / best final cost (geomean)")
-    ax.set_title(f"{case} ({d['runs'][0]} runs)")
-
-
-def plot_sum_ranking(fin: pl.DataFrame, case: str, ax, *, metric: Metric = "cost"):
-    """Sum of the final `metric` (cost, time or size) over all runs, like dump.py's dumpall."""
-    d = (
-        fin.filter(pl.col("case") == case)
-        .group_by("scheduler")
-        .agg(total=pl.col(metric).sum(), runs=pl.len())
-        .sort("total", descending=True)
-    )
-    _bars(ax, d["scheduler"], d["total"], ".4g")
-    ax.set_xlabel(f"total final {RESOURCES.get(metric, metric)}")
-    ax.set_title(f"{case} ({d['runs'][0]} runs)")
-
-
-def win_matrix(fin: pl.DataFrame, case: str) -> tuple[list[Scheduler], np.ndarray]:
-    """M[i, j] = (wins - losses) / runs of scheduler i against j."""
-    wide = (
-        fin.filter(pl.col("case") == case)
-        .pivot("scheduler", index="run", values="cost")
-        .drop("run")
-    )
-    names = [s for s in SCHEDULERS if s in wide.columns]
-    c = wide.select(names).to_numpy()
-    # runs missing for either scheduler are NaN and skipped
-    return names, np.nanmean(np.sign(c[:, None, :] - c[:, :, None]), axis=0)
-
-
-def plot_wins(fin: pl.DataFrame, case: str, ax):
-    names, m = win_matrix(fin, case)
-    im = ax.imshow(m, cmap=DIVERGING, vmin=-1, vmax=1)
-    ax.set_xticks(range(len(names)), names, rotation=45, ha="right")
-    ax.set_yticks(range(len(names)), names)
-    ax.grid(False)
-    ax.spines[:].set_visible(False)
-    ax.set_xticks(np.arange(len(names) + 1) - 0.5, minor=True)
-    ax.set_yticks(np.arange(len(names) + 1) - 0.5, minor=True)
-    ax.grid(which="minor", color=SURFACE, linewidth=2)
-    ax.tick_params(which="both", length=0)
-    for i in range(len(names)):
-        for j in range(len(names)):
-            if i != j:
-                ax.text(
-                    j,
-                    i,
-                    f"{m[i, j]:+.2f}",
-                    ha="center",
-                    va="center",
-                    fontsize=7,
-                    color="white" if abs(m[i, j]) > 0.6 else INK,
-                )
-    ax.set_title(f"{case}: row vs column\n(wins − losses) / runs")
-    return im
-
-
-def plot_profile(
-    fin: pl.DataFrame,
-    case: str,
-    res: Resource,
-    ax,
-    *,
-    schedulers: Collection[Scheduler] = SCHEDULERS,
-):
-    """Fraction of runs where a scheduler reached the best known cost within the given resource."""
-    d = fin.filter(pl.col("case") == case)
-    for s in schedulers:
-        runs = d.filter(pl.col("scheduler") == s)
-        if runs.is_empty():
-            continue
-        xs = np.sort(runs[f"{res}_to_best"].drop_nulls().to_numpy())
-        ys = np.arange(1, len(xs) + 1) / len(runs)
-        x = np.r_[d[f"{res}_to_best"].min(), xs, d[res].max()]
-        y = np.r_[0, ys, ys[-1] if len(ys) else 0]
-        ax.step(x, y, where="post", color=SCHEDULERS[s], label=s)
-    ax.set_xscale("log")
-    ax.set_ylim(0, 1.02)
-    ax.set_xlabel(RESOURCES[res])
-    ax.set_ylabel("runs at best known cost")
-    ax.set_title(case)
-
-
-def plot_quality(
-    df: pl.DataFrame,
-    case: str,
-    run: int,
-    res: Resource,
-    ax,
-    *,
-    schedulers: Collection[Scheduler] = SCHEDULERS,
-):
-    """Cost over resource for one run, cut off once the best cost among `schedulers` is reached (marked with ★)."""
-    d = df.filter(
-        (pl.col("case") == case)
-        & (pl.col("run") == run)
-        & pl.col("scheduler").is_in(list(schedulers))
-    )
-    best = d.group_by("scheduler").agg(pl.col("cost").last())["cost"].min()
-    for s in schedulers:
-        e = d.filter(pl.col("scheduler") == s)
-        if e.is_empty():
-            continue
-        hit = e["cost"] <= best
-        if hit.any():
-            e = e.head(hit.arg_true()[0] + 1)
-        ax.step(e[res], e["cost"], where="post", color=SCHEDULERS[s], label=s)
-        if hit.any():
-            ax.plot(
-                e[res][-1],
-                e["cost"][-1],
-                marker="*",
-                markersize=12,
-                color=SCHEDULERS[s],
-                markeredgecolor=SURFACE,
-            )
-    ax.set_xlabel(RESOURCES[res])
-    ax.set_ylabel("extraction cost")
-    ax.set_title(f"{case} / run {run}")
-
-
-def plot_dev(
-    df: pl.DataFrame,
-    case: str,
-    run: int,
-    ax,
-    *,
-    metric: Metric = "cost",
-    schedulers: Collection[Scheduler] = SCHEDULERS,
-):
-    """`metric` per iteration for one run, like dump.py's dev_plot."""
-    d = df.filter((pl.col("case") == case) & (pl.col("run") == run))
-    for s in schedulers:
-        e = d.filter(pl.col("scheduler") == s)
-        if not e.is_empty():
-            ax.step(
-                e["iteration"], e[metric], where="post", color=SCHEDULERS[s], label=s
-            )
-    ax.set_xlabel("iteration")
-    ax.set_ylabel(RESOURCES.get(metric, "extraction cost"))
-    ax.set_title(f"{case} / run {run}: {metric} per iteration")
-
-
-def plot_solved(fin: pl.DataFrame, ax, case: str, *, solved_cost: float = 1):
-    d = (
-        fin.filter(pl.col("case") == case)
-        .group_by("scheduler")
+        .group_by("case", "scheduler")
         .agg(solved=(pl.col("cost") == solved_cost).sum(), runs=pl.len())
-        .sort("solved", "scheduler", descending=[False, True])
     )
-    _bars(ax, d["scheduler"], d["solved"], "d")
-    ax.set_xlim(0, d["runs"].max())
-    ax.set_xlabel(f"solved runs (of {d['runs'].max()})")
-    ax.set_title(f"{case}: proved goals")
+    runs = d["runs"].max()
+    return (
+        _bars(d, "solved", "d")
+        + p9.expand_limits(x=runs)
+        + p9.labs(
+            x=f"solved runs (of {runs})",
+            title=f"{case}: proved goals",
+            subtitle="runs that ended at the goal; higher is better",
+        )
+    )
+
+
+def profile(fin: pl.DataFrame) -> p9.ggplot:
+    """Fraction of runs where a scheduler reached the best known cost within the given resource."""
+    d = pl.concat(
+        fin.select(
+            "case",
+            "scheduler",
+            resource=pl.lit(label, RESOURCE),
+            x=pl.col(f"{res}_to_best"),
+            lo=pl.col(f"{res}_to_best").min().over("case"),
+            hi=pl.col(res).max().over("case"),
+            runs=pl.len().over("case", "scheduler"),
+        )
+        for res, label in RESOURCES.items()
+    )
+    group = ["case", "resource", "scheduler"]
+    reached = (
+        d.drop_nulls("x")
+        .sort("x")
+        .with_columns(y=pl.col("x").cum_count().over(group) / pl.col("runs"))
+    )
+    ends = d.group_by(group).agg(pl.col("lo", "hi").first())
+    ends = ends.join(
+        reached.group_by(group).agg(pl.col("y").max()), on=group, how="left"
+    )
+    curves = pl.concat(
+        [
+            ends.select(*group, x="lo", y=pl.lit(0.0)),
+            reached.select(*group, "x", "y"),
+            ends.select(*group, x="hi", y=pl.col("y").fill_null(0)),
+        ]
+    ).sort("x", maintain_order=True)
+    return (
+        _steps(
+            _titled(curves, fin),
+            "y",
+            ["title", "resource"],
+            nrow=len(RESOURCES),
+            dir="v",
+            scales="free_x",
+        )
+        + p9.coord_cartesian(ylim=(0, 1))
+        + p9.labs(
+            x="",
+            y="runs at best known cost",
+            title="Reaching the best known cost",
+            subtitle="fraction of runs that reached the best final cost of any scheduler"
+            " within a time / e-graph size budget; higher is better",
+        )
+    )
+
+
+def _relative(df: pl.DataFrame, fin: pl.DataFrame, metric: Metric) -> pl.DataFrame:
+    """`df` with `rel` = `metric` / the smallest final `metric` of any scheduler on that run."""
+    best = fin.group_by("case", "run").agg(best=pl.col(metric).min())
+    return df.join(best, on=["case", "run"]).with_columns(
+        rel=pl.col(metric) / pl.col("best")
+    )
+
+
+def _log_grid(d: pl.DataFrame, by: list[str], n: int = 300) -> pl.DataFrame:
+    """`n` log-spaced `x` per group of `by`, spanning that group's `x`."""
+    return (
+        d.group_by(by)
+        .agg(x=pl.linear_spaces(pl.col("x").min().log(), pl.col("x").max().log(), n))
+        .explode("x")
+        .with_columns(pl.col("x").exp())
+    )
+
+
+def _geomean_curves(d: pl.DataFrame, by: list[str], grid: pl.DataFrame) -> pl.DataFrame:
+    """Per group of `by` and scheduler, the geometric mean over all runs of `rel` as a
+    step function of `x`, sampled at `grid`. Before a run starts it is at its first
+    `rel`, after it ends at its last."""
+    run = [*by, "scheduler", "run"]
+    d = d.select(*run, "x", "rel").sort("x", maintain_order=True)
+    starts = d.group_by(run).agg(start=pl.col("rel").first())
+    return (
+        grid.join(starts, on=by)
+        .sort("x")
+        .join_asof(d, on="x", by=run, check_sortedness=False)
+        .group_by(*by, "scheduler", "x")
+        .agg(rel=_geomean(pl.col("rel").fill_null(pl.col("start"))))
+    )
+
+
+def quality(df: pl.DataFrame, fin: pl.DataFrame) -> p9.ggplot:
+    """Cost relative to the best final cost of each run over resource, geometric mean over all runs.
+    The resource is the running maximum, since the e-graph size can shrink."""
+    d = (
+        _relative(df, fin, "cost")
+        .with_columns(pl.col(r).cum_max().over(KEY) for r in RESOURCES)
+        .unpivot(
+            list(RESOURCES),
+            index=[*KEY, "rel"],
+            variable_name="resource",
+            value_name="x",
+        )
+        .with_columns(
+            pl.col("resource").replace_strict(RESOURCES, return_dtype=RESOURCE)
+        )
+    )
+    by = ["case", "resource"]
+    curves = _titled(_geomean_curves(d, by, _log_grid(d, by)), fin)
+    return (
+        _steps(
+            curves,
+            "rel",
+            ["title", "resource"],
+            nrow=len(RESOURCES),
+            dir="v",
+            scales="free",
+        )
+        + p9.scale_y_log10()
+        + p9.labs(
+            x="",
+            y="cost / best final cost (geomean)",
+            title="Cost over time and e-graph size",
+            subtitle="cost relative to the best final cost of each run,"
+            " geometric mean over runs; lower is better",
+        )
+    )
+
+
+def dev(df: pl.DataFrame, fin: pl.DataFrame) -> p9.ggplot:
+    """Cost, time and size per iteration relative to the smallest final value of each run,
+    geometric mean over all runs."""
+    d = pl.concat(
+        _relative(df, fin, m).select(
+            *KEY,
+            "rel",
+            metric=pl.lit(label, METRIC),
+            x=pl.col("iteration").cast(pl.Float64),
+        )
+        for m, label in METRICS.items()
+    )
+    by = ["case", "metric"]
+    grid = _log_grid(d, by).with_columns(pl.col("x").round()).unique()
+    curves = _titled(_geomean_curves(d, by, grid), fin)
+    return (
+        _steps(
+            curves,
+            "rel",
+            ["title", "metric"],
+            nrow=len(METRICS),
+            dir="v",
+            scales="free",
+        )
+        + p9.scale_y_log10()
+        + p9.labs(
+            x="iteration",
+            y="value / smallest final value (geomean)",
+            title="Development per iteration",
+            subtitle="cost, time and e-graph size relative to the smallest final value"
+            " of each run, geometric mean over runs; lower is better",
+        )
+    )
