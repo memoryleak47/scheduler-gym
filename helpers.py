@@ -26,7 +26,6 @@ METRIC = pl.Enum(METRICS.values())
 ENTRY_RE = re.compile(
     r"costs=\[([^\]]*)\], total_size=(\S+), time=(\S+), iteration=(\d+), stop=(.*)$"
 )
-COLUMNS = ("case", "scheduler", "run", "iteration", "cost", "size", "time", "stop")
 
 
 def setup_style():
@@ -52,21 +51,6 @@ def save(plot: p9.ggplot, name: str, size: tuple[float, float]) -> p9.ggplot:
     return plot
 
 
-def _parse(line: str) -> tuple:
-    """(iteration, cost, size, time, stop) of one entry; `stop` is None unless the entry ends a run."""
-    m = ENTRY_RE.search(line)
-    assert m
-    costs, size, time, iteration, stop = m.groups()
-    stop = stop.strip()
-    return (
-        int(iteration),
-        sum(float(c) for c in costs.split(", ")),
-        float(size),
-        float(time),
-        None if stop == "None" else stop,
-    )
-
-
 def load(schedulers: Sequence[Scheduler], *, root: Path = BENCHDATA) -> pl.DataFrame:
     """One row per entry of `schedulers`; `run` numbers the runs within a file. Unfinished trailing runs are dropped.
     `scheduler` is ordered as given, which fixes the order and colors of the schedulers in all figures."""
@@ -77,12 +61,18 @@ def load(schedulers: Sequence[Scheduler], *, root: Path = BENCHDATA) -> pl.DataF
             continue
         run, pending = 0, []
         for line in path.read_text().splitlines():
-            entry = _parse(line)
-            pending.append((case, scheduler, run, *entry))
-            if entry[-1] is not None:
+            m = ENTRY_RE.search(line)
+            assert m
+            costs, size, time, iteration, stop = m.groups()
+            cost = sum(float(c) for c in costs.split(", "))
+            pending.append(
+                (case, scheduler, run, int(iteration), cost, float(size), float(time))
+            )
+            if stop.strip() != "None":
                 rows += pending
                 run, pending = run + 1, []
-    df = pl.DataFrame(rows, schema=COLUMNS, orient="row", infer_schema_length=None)
+    schema = [*KEY, "iteration", "cost", "size", "time"]
+    df = pl.DataFrame(rows, schema=schema, orient="row")
     return df.with_columns(pl.col("scheduler").cast(pl.Enum(schedulers)))
 
 
@@ -114,22 +104,6 @@ def _geomean(e: pl.Expr) -> pl.Expr:
     return e.log().mean().exp()
 
 
-def _steps(d: pl.DataFrame, y: str, facets: list[str], **kwargs) -> p9.ggplot:
-    """One step line per scheduler of `y` over `x` (log scale), one panel per combination of `facets`."""
-    return (
-        p9.ggplot(d, p9.aes("x", y, color="scheduler"))
-        + p9.geom_step(size=0.8)
-        # plotnine annotates `labeller` too narrowly, facet accepts any labeller
-        + p9.facet_wrap(
-            facets,
-            labeller=p9.labeller(multi_line=False),  # ty: ignore[invalid-argument-type]
-            **kwargs,
-        )
-        + p9.scale_x_log10()
-        + p9.scale_color_hue()
-    )
-
-
 def _titled(d: pl.DataFrame, fin: pl.DataFrame) -> pl.DataFrame:
     """`d` with `title` = case and its number of runs, for facet labels."""
     runs = fin.group_by("case").agg(
@@ -138,6 +112,28 @@ def _titled(d: pl.DataFrame, fin: pl.DataFrame) -> pl.DataFrame:
         )
     )
     return d.join(runs, on="case")
+
+
+def _facets(by: str, n: int, scales: Literal["free", "free_x"]) -> p9.facet_wrap:
+    """One column per case (`title`), one row per value of `by`, of which there are `n`."""
+    return p9.facet_wrap(
+        ["title", by],
+        nrow=n,
+        dir="v",
+        scales=scales,
+        # plotnine annotates `labeller` too narrowly, facet accepts any labeller
+        labeller=p9.labeller(multi_line=False),  # ty: ignore[invalid-argument-type]
+    )
+
+
+def _steps(d: pl.DataFrame, y: str) -> p9.ggplot:
+    """One step line per scheduler of `y` over `x` (log scale)."""
+    return (
+        p9.ggplot(d, p9.aes("x", y, color="scheduler"))
+        + p9.geom_step(size=0.8)
+        + p9.scale_x_log10()
+        + p9.scale_color_hue()
+    )
 
 
 def _bars(d: pl.DataFrame, value: str, fmt: str, *, base: float = 0) -> p9.ggplot:
@@ -184,21 +180,15 @@ def ranking(fin: pl.DataFrame) -> p9.ggplot:
 
 def sums(fin: pl.DataFrame) -> p9.ggplot:
     """Sum of the final cost, time and size over all runs, like dump.py's dumpall."""
-    d = (
-        fin.unpivot(list(METRICS), index=["case", "scheduler"], variable_name="metric")
-        .group_by("case", "scheduler", "metric")
-        .agg(total=pl.col("value").sum())
-        .with_columns(pl.col("metric").replace_strict(METRICS, return_dtype=METRIC))
+    d = pl.concat(
+        fin.group_by("case", "scheduler").agg(
+            metric=pl.lit(label, METRIC), total=pl.col(m).sum()
+        )
+        for m, label in METRICS.items()
     )
     return (
         _bars(_titled(d, fin), "total", ".4g")
-        + p9.facet_wrap(
-            ["title", "metric"],
-            nrow=len(METRICS),
-            dir="v",
-            scales="free",
-            labeller=p9.labeller(multi_line=False),  # ty: ignore[invalid-argument-type]
-        )
+        + _facets("metric", len(METRICS), "free")
         + p9.labs(
             x="total final value",
             title="Totals over all runs",
@@ -227,45 +217,37 @@ def solved(fin: pl.DataFrame, case: str = "caviar", *, solved_cost: float = 1):
 
 
 def profile(fin: pl.DataFrame) -> p9.ggplot:
-    """Fraction of runs where a scheduler reached the best known cost within the given resource."""
+    """Fraction of runs where a scheduler reached the best known cost within the given resource.
+    Each curve starts at 0 at the smallest resource any scheduler needed and is extended to
+    the largest resource any scheduler used."""
+    group = ["case", "resource", "scheduler"]
     d = pl.concat(
         fin.select(
             "case",
             "scheduler",
             resource=pl.lit(label, RESOURCE),
             x=pl.col(f"{res}_to_best"),
-            lo=pl.col(f"{res}_to_best").min().over("case"),
             hi=pl.col(res).max().over("case"),
-            runs=pl.len().over("case", "scheduler"),
         )
         for res, label in RESOURCES.items()
+    ).with_columns(
+        lo=pl.col("x").min().over("case", "resource"),
+        # runs that never reached the best have a null `x`, and so a null rank
+        y=(pl.col("x").rank("ordinal") / pl.len()).over(group),
     )
-    group = ["case", "resource", "scheduler"]
-    reached = (
-        d.drop_nulls("x")
-        .sort("x")
-        .with_columns(y=pl.col("x").cum_count().over(group) / pl.col("runs"))
-    )
-    ends = d.group_by(group).agg(pl.col("lo", "hi").first())
-    ends = ends.join(
-        reached.group_by(group).agg(pl.col("y").max()), on=group, how="left"
+    ends = d.group_by(group).agg(
+        pl.col("lo", "hi").first(), pl.col("y").max().fill_null(0)
     )
     curves = pl.concat(
         [
             ends.select(*group, x="lo", y=pl.lit(0.0)),
-            reached.select(*group, "x", "y"),
-            ends.select(*group, x="hi", y=pl.col("y").fill_null(0)),
+            d.drop_nulls("x").select(*group, "x", "y"),
+            ends.select(*group, x="hi", y="y"),
         ]
     ).sort("x", maintain_order=True)
     return (
-        _steps(
-            _titled(curves, fin),
-            "y",
-            ["title", "resource"],
-            nrow=len(RESOURCES),
-            dir="v",
-            scales="free_x",
-        )
+        _steps(_titled(curves, fin), "y")
+        + _facets("resource", len(RESOURCES), "free_x")
         + p9.coord_cartesian(ylim=(0, 1))
         + p9.labs(
             x="",
@@ -314,30 +296,21 @@ def _geomean_curves(d: pl.DataFrame, by: list[str], grid: pl.DataFrame) -> pl.Da
 def quality(df: pl.DataFrame, fin: pl.DataFrame) -> p9.ggplot:
     """Cost relative to the best final cost of each run over resource, geometric mean over all runs.
     The resource is the running maximum, since the e-graph size can shrink."""
-    d = (
-        _relative(df, fin, "cost")
-        .with_columns(pl.col(r).cum_max().over(KEY) for r in RESOURCES)
-        .unpivot(
-            list(RESOURCES),
-            index=[*KEY, "rel"],
-            variable_name="resource",
-            value_name="x",
+    rel = _relative(df, fin, "cost")
+    d = pl.concat(
+        rel.select(
+            *KEY,
+            "rel",
+            resource=pl.lit(label, RESOURCE),
+            x=pl.col(r).cum_max().over(KEY),
         )
-        .with_columns(
-            pl.col("resource").replace_strict(RESOURCES, return_dtype=RESOURCE)
-        )
+        for r, label in RESOURCES.items()
     )
     by = ["case", "resource"]
     curves = _titled(_geomean_curves(d, by, _log_grid(d, by)), fin)
     return (
-        _steps(
-            curves,
-            "rel",
-            ["title", "resource"],
-            nrow=len(RESOURCES),
-            dir="v",
-            scales="free",
-        )
+        _steps(curves, "rel")
+        + _facets("resource", len(RESOURCES), "free")
         + p9.scale_y_log10()
         + p9.labs(
             x="",
@@ -365,14 +338,8 @@ def dev(df: pl.DataFrame, fin: pl.DataFrame) -> p9.ggplot:
     grid = _log_grid(d, by).with_columns(pl.col("x").round()).unique()
     curves = _titled(_geomean_curves(d, by, grid), fin)
     return (
-        _steps(
-            curves,
-            "rel",
-            ["title", "metric"],
-            nrow=len(METRICS),
-            dir="v",
-            scales="free",
-        )
+        _steps(curves, "rel")
+        + _facets("metric", len(METRICS), "free")
         + p9.scale_y_log10()
         + p9.labs(
             x="iteration",
