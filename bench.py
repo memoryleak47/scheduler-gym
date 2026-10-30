@@ -7,57 +7,14 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-SCHEDULERS = [
-    "detour-lhs-400.rs",
-    "backoff.rs",
-    "detour-rhs-400.rs",
-    "detour1.rs",
-    "ctxt-400.rs",
-    "size-400.rs",
-    "pat-400.rs",
-    "detour-classbased-400.rs",
-    "detour-rhs-400-classboost.rs",
-    "detour-rhs-400-classboost-halfed.rs",
-    "detour-min-400.rs",
-    "backoff-fresh.rs",
-    "backoff-illegal.rs",
-    "backoff-legal.rs",
-    "detour-classbased-1000.rs",
-    "detour-classbased-500.rs",
-    "detour-lhs-400-dynamic.rs",
-    "detour-lhs-400-prestart.rs",
-    "detour-lhs-400-shortcut-simple.rs",
-    "detour-lhs-400-shortcut.rs",
-    "detour-lhs-400-simple.rs",
-    "detour-lhs-400-simple2.rs",
-    "detour-lhs-400-simple3.rs",
-    "detour-lhs-400-simple4-800.rs",
-    "detour-lhs-400-simple4-nostorage.rs",
-    "detour-lhs-400-simple4-shortcut.rs",
-    "detour-lhs-400-simple4.rs",
-    "detour-lhs-400_800-shortcut.rs",
-    "detour-rhs-100.rs",
-    "detour-rhs-20.rs",
-    "detour-rhs-200.rs",
-    "detour-rhs-300.rs",
-    "detour-rhs-400-boost.rs",
-    "detour-rhs-400-boost2.rs",
-    "detour-rhs-400-merge.rs",
-    "detour-rhs-500.rs",
-    "detour-rhs.rs",
-    "detour-vanilla.rs",
-    "detour1-400.rs",
-    "detour1-rhs.rs",
-    "size-bounded.rs",
-]
-CASE_STUDIES = ["caviar", "szalinski", "trig", "integ"]
+from gym import CASE_STUDIES, SCHEDULERS
 
 ROOT = Path(__file__).resolve().parent
 BENCHDATA = ROOT / "benchdata"
 
 
 def bench1(scheduler: str, case: str, tmp: Path):
-    out_dir = BENCHDATA / scheduler
+    out_dir = BENCHDATA / f"{scheduler}.rs"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_entries = out_dir / f"{case}.entries"
     log = out_dir / f"{case}.log"
@@ -72,7 +29,7 @@ def bench1(scheduler: str, case: str, tmp: Path):
     entries.unlink(missing_ok=True)
 
     sched.write_text(
-        (ROOT / "schedulers" / scheduler).read_text()
+        (ROOT / "schedulers" / f"{scheduler}.rs").read_text()
         + (ROOT / "gym-common.rs").read_text()
     )
 

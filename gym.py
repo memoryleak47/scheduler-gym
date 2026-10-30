@@ -1,0 +1,56 @@
+"""Schedulers and case studies, shared by bench.py and helpers.py (bench.sh has its own copy). Keep this free of dependencies."""
+
+from typing import Literal, get_args
+
+# every scheduler in schedulers/, without the .rs suffix
+Scheduler = Literal[
+    "backoff",
+    "detour-lhs-400",
+    "detour-lhs-20",
+    "detour-lhs-100",
+    "detour-lhs-200",
+    "detour-lhs-300",
+    "detour-lhs-500",
+    "detour-rhs-400",
+    "detour-min-400",
+    "detour1",
+    "ctxt-400",
+    "size-400",
+    "pat-400",
+    "detour-classbased-400",
+    "detour-rhs-400-classboost",
+    "detour-rhs-400-classboost-halfed",
+    "backoff-fresh",
+    "backoff-illegal",
+    "backoff-legal",
+    "detour-classbased-1000",
+    "detour-classbased-500",
+    "detour-lhs-400-dynamic",
+    "detour-lhs-400-prestart",
+    "detour-lhs-400-shortcut-simple",
+    "detour-lhs-400-shortcut",
+    "detour-lhs-400-simple",
+    "detour-lhs-400-simple2",
+    "detour-lhs-400-simple3",
+    "detour-lhs-400-simple4-800",
+    "detour-lhs-400-simple4-nostorage",
+    "detour-lhs-400-simple4-shortcut",
+    "detour-lhs-400-simple4",
+    "detour-lhs-400_800-shortcut",
+    "detour-rhs-100",
+    "detour-rhs-20",
+    "detour-rhs-200",
+    "detour-rhs-300",
+    "detour-rhs-400-boost",
+    "detour-rhs-400-boost2",
+    "detour-rhs-400-merge",
+    "detour-rhs-500",
+    "detour-rhs",
+    "detour-vanilla",
+    "detour1-400",
+    "detour1-rhs",
+    "size-bounded",
+]
+SCHEDULERS: tuple[Scheduler, ...] = get_args(Scheduler)
+
+CASE_STUDIES = ("caviar", "szalinski", "trig", "integ")

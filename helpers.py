@@ -1,13 +1,16 @@
 import re
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from itertools import chain, repeat
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Literal
 
 import matplotlib as mpl
 import numpy as np
 import polars as pl
 from matplotlib.colors import LinearSegmentedColormap
+
+from gym import SCHEDULERS as ALL_SCHEDULERS
+from gym import Scheduler
 
 ROOT = Path(__file__).resolve().parent
 BENCHDATA = ROOT / "benchdata"
@@ -16,49 +19,6 @@ FIGURES = ROOT / "figures"
 KEY = ("case", "scheduler", "run")
 Resource = Literal["time", "size"]
 Metric = Literal["cost", "time", "size"]
-Scheduler = Literal[
-    "backoff",
-    "detour-lhs-400",
-    "detour-rhs-400",
-    "detour-min-400",
-    "detour1",
-    "ctxt-400",
-    "size-400",
-    "pat-400",
-    "detour-classbased-400",
-    "detour-rhs-400-classboost",
-    "detour-rhs-400-classboost-halfed",
-    "backoff-fresh",
-    "backoff-illegal",
-    "backoff-legal",
-    "detour-classbased-1000",
-    "detour-classbased-500",
-    "detour-lhs-400-dynamic",
-    "detour-lhs-400-prestart",
-    "detour-lhs-400-shortcut-simple",
-    "detour-lhs-400-shortcut",
-    "detour-lhs-400-simple",
-    "detour-lhs-400-simple2",
-    "detour-lhs-400-simple3",
-    "detour-lhs-400-simple4-800",
-    "detour-lhs-400-simple4-nostorage",
-    "detour-lhs-400-simple4-shortcut",
-    "detour-lhs-400-simple4",
-    "detour-lhs-400_800-shortcut",
-    "detour-rhs-100",
-    "detour-rhs-20",
-    "detour-rhs-200",
-    "detour-rhs-300",
-    "detour-rhs-400-boost",
-    "detour-rhs-400-boost2",
-    "detour-rhs-400-merge",
-    "detour-rhs-500",
-    "detour-rhs",
-    "detour-vanilla",
-    "detour1-400",
-    "detour1-rhs",
-    "size-bounded",
-]
 
 RESOURCES: dict[Resource, str] = {"time": "time [s]", "size": "e-graph size"}
 
@@ -80,17 +40,18 @@ PALETTE = (
     "#e34948",
 )
 
-# the shown schedulers and their colors, fixed so a scheduler looks the same in every figure
+# the shown schedulers and their colors, fixed so a scheduler looks the same in every figure.
+# only ever updated in place, since the plot functions use it as their default argument
 SCHEDULERS: dict[Scheduler, str] = {}
 
 
 def select(schedulers: Sequence[Scheduler]):
     """Show only `schedulers`, colored in this order (the palette has 8 colors, the rest are gray)."""
-    global SCHEDULERS
-    SCHEDULERS = dict(zip(schedulers, chain(PALETTE, repeat(MUTED))))
+    SCHEDULERS.clear()
+    SCHEDULERS.update(zip(schedulers, chain(PALETTE, repeat(MUTED))))
 
 
-select(get_args(Scheduler))
+select(ALL_SCHEDULERS)
 DIVERGING = LinearSegmentedColormap.from_list("wins", [PALETTE[7], NEUTRAL, PALETTE[0]])
 
 ENTRY_RE = re.compile(
@@ -202,6 +163,24 @@ def check_runs(fin: pl.DataFrame):
             print(g.sort("len").select("scheduler", "len"))
 
 
+def _bars(ax, labels: pl.Series, values: pl.Series, fmt: str, *, left: float = 0):
+    """Horizontal bars from `left` to `values`, each labelled with its value."""
+    y = np.arange(len(values))
+    ax.barh(y, values - left, left=left, height=0.6, color=PALETTE[0])
+    ax.set_yticks(y, labels)
+    for yi, v in zip(y, values):
+        ax.annotate(
+            format(v, fmt),
+            (v, yi),
+            xytext=(4, 0),
+            textcoords="offset points",
+            va="center",
+            fontsize=8,
+            color=INK_2,
+        )
+    ax.grid(axis="y", visible=False)
+
+
 def plot_ranking(fin: pl.DataFrame, case: str, ax):
     """Geometric mean of final cost relative to the best scheduler per run (1 = always best)."""
     d = (
@@ -210,20 +189,7 @@ def plot_ranking(fin: pl.DataFrame, case: str, ax):
         .agg(ratio=(pl.col("cost") / pl.col("best")).log().mean().exp(), runs=pl.len())
         .sort("ratio", descending=True)
     )
-    y = np.arange(len(d))
-    ax.barh(y, d["ratio"] - 1, left=1, height=0.6, color=PALETTE[0])
-    ax.set_yticks(y, d["scheduler"])
-    for yi, r in zip(y, d["ratio"]):
-        ax.annotate(
-            f"{r:.3f}",
-            (r, yi),
-            xytext=(4, 0),
-            textcoords="offset points",
-            va="center",
-            fontsize=8,
-            color=INK_2,
-        )
-    ax.grid(axis="y", visible=False)
+    _bars(ax, d["scheduler"], d["ratio"], ".3f", left=1)
     ax.set_xlim(left=1)
     ax.set_xlabel("final cost / best final cost (geomean)")
     ax.set_title(f"{case} ({d['runs'][0]} runs)")
@@ -237,20 +203,7 @@ def plot_sum_ranking(fin: pl.DataFrame, case: str, ax, *, metric: Metric = "cost
         .agg(total=pl.col(metric).sum(), runs=pl.len())
         .sort("total", descending=True)
     )
-    y = np.arange(len(d))
-    ax.barh(y, d["total"], height=0.6, color=PALETTE[0])
-    ax.set_yticks(y, d["scheduler"])
-    for yi, t in zip(y, d["total"]):
-        ax.annotate(
-            f"{t:.4g}",
-            (t, yi),
-            xytext=(4, 0),
-            textcoords="offset points",
-            va="center",
-            fontsize=8,
-            color=INK_2,
-        )
-    ax.grid(axis="y", visible=False)
+    _bars(ax, d["scheduler"], d["total"], ".4g")
     ax.set_xlabel(f"total final {RESOURCES.get(metric, metric)}")
     ax.set_title(f"{case} ({d['runs'][0]} runs)")
 
@@ -264,13 +217,8 @@ def win_matrix(fin: pl.DataFrame, case: str) -> tuple[list[Scheduler], np.ndarra
     )
     names = [s for s in SCHEDULERS if s in wide.columns]
     c = wide.select(names).to_numpy()
-    n = len(names)
-    m = np.zeros((n, n))
-    for i in range(n):
-        for j in range(n):
-            ok = ~np.isnan(c[:, i]) & ~np.isnan(c[:, j])
-            m[i, j] = (np.sign(c[ok, j] - c[ok, i])).mean() if ok.any() else np.nan
-    return names, m
+    # runs missing for either scheduler are NaN and skipped
+    return names, np.nanmean(np.sign(c[:, None, :] - c[:, :, None]), axis=0)
 
 
 def plot_wins(fin: pl.DataFrame, case: str, ax):
@@ -306,11 +254,9 @@ def plot_profile(
     res: Resource,
     ax,
     *,
-    schedulers: Sequence[Scheduler] | None = None,
+    schedulers: Collection[Scheduler] = SCHEDULERS,
 ):
     """Fraction of runs where a scheduler reached the best known cost within the given resource."""
-    if schedulers is None:
-        schedulers = tuple(SCHEDULERS)
     d = fin.filter(pl.col("case") == case)
     for s in schedulers:
         runs = d.filter(pl.col("scheduler") == s)
@@ -335,15 +281,13 @@ def plot_quality(
     res: Resource,
     ax,
     *,
-    schedulers: Sequence[Scheduler] | None = None,
+    schedulers: Collection[Scheduler] = SCHEDULERS,
 ):
     """Cost over resource for one run, cut off once the best cost among `schedulers` is reached (marked with ★)."""
-    if schedulers is None:
-        schedulers = tuple(SCHEDULERS)
     d = df.filter(
         (pl.col("case") == case)
         & (pl.col("run") == run)
-        & pl.col("scheduler").is_in(schedulers)
+        & pl.col("scheduler").is_in(list(schedulers))
     )
     best = d.group_by("scheduler").agg(pl.col("cost").last())["cost"].min()
     for s in schedulers:
@@ -375,11 +319,9 @@ def plot_dev(
     ax,
     *,
     metric: Metric = "cost",
-    schedulers: Sequence[Scheduler] | None = None,
+    schedulers: Collection[Scheduler] = SCHEDULERS,
 ):
     """`metric` per iteration for one run, like dump.py's dev_plot."""
-    if schedulers is None:
-        schedulers = tuple(SCHEDULERS)
     d = df.filter((pl.col("case") == case) & (pl.col("run") == run))
     for s in schedulers:
         e = d.filter(pl.col("scheduler") == s)
@@ -399,20 +341,7 @@ def plot_solved(fin: pl.DataFrame, ax, case: str, *, solved_cost: float = 1):
         .agg(solved=(pl.col("cost") == solved_cost).sum(), runs=pl.len())
         .sort("solved", "scheduler", descending=[False, True])
     )
-    y = np.arange(len(d))
-    ax.barh(y, d["solved"], height=0.6, color=PALETTE[0])
-    ax.set_yticks(y, d["scheduler"])
-    for yi, n in zip(y, d["solved"]):
-        ax.annotate(
-            str(n),
-            (n, yi),
-            xytext=(4, 0),
-            textcoords="offset points",
-            va="center",
-            fontsize=8,
-            color=INK_2,
-        )
-    ax.grid(axis="y", visible=False)
+    _bars(ax, d["scheduler"], d["solved"], "d")
     ax.set_xlim(0, d["runs"].max())
     ax.set_xlabel(f"solved runs (of {d['runs'].max()})")
     ax.set_title(f"{case}: proved goals")
