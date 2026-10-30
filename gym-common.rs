@@ -73,10 +73,11 @@ fn dump_iteration<'a, L: Language, N: Analysis<L> + Default, IterData: Iteration
     use std::fs::OpenOptions;
     use std::io::Write;
 
+    let path = std::env::var("GYM_ENTRIES").unwrap_or_else(|_| "/tmp/entries.txt".to_string());
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open("/tmp/entries.txt")
+        .open(path)
         .unwrap();
     writeln!(file, "#ENTRY: costs={costs:?}, total_size={total_size}, time={time}, iteration={it}, stop={stop:?}").unwrap();
 }

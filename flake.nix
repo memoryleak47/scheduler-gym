@@ -35,6 +35,9 @@
           ps: with ps; [
             matplotlib
             numpy
+            polars
+            jupyter
+            ipykernel
           ]
         );
       in
@@ -49,6 +52,8 @@
             cargo-nextest
             nil
             nixfmt
+            ruff
+            ty
           ]);
 
           # szalinski's default make target converts inputs with openscad.
