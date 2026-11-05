@@ -17,7 +17,7 @@ SYS_CPU = Path("/sys/devices/system/cpu")
 BENCHMODE_CPUS = Path("/run/benchmode/bench-cpus")
 # every scheduler in schedulers/, without the .rs suffix
 SCHEDULERS = tuple(sorted(p.stem for p in (ROOT / "schedulers").glob("*.rs")))
-CASE_STUDIES = ("caviar", "szalinski", "trig", "integ")
+CASE_STUDIES = ("caviar", "szalinski", "trig", "integ", "lean-egg")
 
 
 def physical_cpus() -> list[list[int]]:

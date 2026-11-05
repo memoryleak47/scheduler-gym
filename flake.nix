@@ -33,6 +33,11 @@
       in
       {
         devShells.default = pkgs.mkShell {
+          # lean-egg: libegg_for_lean.so calls back into Lean-compiled code
+          # (`lean_is_synthable`) and libffi.so calls into libegg_for_lean.so.
+          # This cycle only resolves with lazy binding, so `-z now` must be off.
+          hardeningDisable = [ "bindnow" ];
+
           nativeBuildInputs = [
             toolchain
           ]
@@ -44,6 +49,8 @@
             ruff
             ty
             uv
+            # lean-egg case
+            elan
             # benchmarking: taskset (bench.py pins case studies), monitoring tools
             util-linux
             linuxPackages.turbostat
