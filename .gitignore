@@ -3,3 +3,4 @@ benchdata*
 figures/
 __pycache__/
 .venv/
+.bench-work/

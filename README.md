@@ -19,7 +19,9 @@ sudo ./benchmode.sh on
 sudo ./benchmode.sh off
 ```
 
-Each case study is pinned to its own cores. Temperature and frequency are logged to `benchdata/thermals-*.csv`.
+Every (case study, scheduler) pair is a job.
+One worker per physical core pulls jobs from a shared queue and runs them pinned to its core, in a private copy of the case study under `.bench-work/` (synced with rsync at the start of each run).
+Temperature and per-core frequency are logged to `benchdata/thermals-*.csv`.
 
 ## Figures
 
