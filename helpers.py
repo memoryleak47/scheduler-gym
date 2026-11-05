@@ -30,11 +30,11 @@ _NAME = pl.col("scheduler").cast(pl.String)
 SIDE_OF = (
     pl.when(_NAME == "backoff")
     .then(pl.lit("backoff"))
-    .otherwise(_NAME.str.extract(r"^detour-(lhs|rhs|class)-\d+$").fill_null("other"))
+    .otherwise(_NAME.str.extract(r"^inclusion-(lhs|rhs|class)-\d+$").fill_null("other"))
     .cast(SIDE)
 )
 K_OF = _NAME.str.extract(r"-(\d+)$").cast(pl.Int64)
-DETOUR = pl.col("side").is_in(["lhs", "rhs", "class"])
+INCLUSION = pl.col("side").is_in(["lhs", "rhs", "class"])
 # the scheduler the bar charts are relative to
 BASELINE = "backoff"
 # alpha of the curves and bars that are not the best of their side
@@ -170,7 +170,7 @@ def _geomean(e: pl.Expr) -> pl.Expr:
 def _top(*over: str) -> pl.Expr:
     """Backoff, and of each mode the first row per `over` and side."""
     return (
-        pl.when(DETOUR)
+        pl.when(INCLUSION)
         .then(pl.int_range(pl.len()).over(*over, "side") == 0)
         .otherwise(pl.col("side") == "backoff")
     )
@@ -189,7 +189,7 @@ def _titled(
     if tops is None:
         tops = fin.select("case", "scheduler", "side", "top").unique()
     by = [c for c in tops.columns if c not in ("scheduler", "side", "top")]
-    top = pl.col("top") & DETOUR
+    top = pl.col("top") & INCLUSION
     pick = pl.format("{} {}", pl.col("side").cast(pl.String), K_OF)
     runs = fin.group_by("case").agg(runs=pl.col("run").n_unique())
     titles = (
@@ -334,8 +334,8 @@ def _bars(d: pl.DataFrame, value: str, *, zoom: float = 100) -> p9.ggplot:
         )
         + p9.scale_y_discrete(
             limits=top_down,
-            # detour-class-400 -> class 400
-            labels=[s.removeprefix("detour-").replace("-", " ") for s in top_down],
+            # inclusion-class-400 -> class 400
+            labels=[s.removeprefix("inclusion-").replace("-", " ") for s in top_down],
         )
         + p9.scale_color_manual(values=COLORS)
         + p9.guides(color="none")
@@ -400,12 +400,12 @@ def solved(
         gain=(pl.col("solved") / pl.col("base") - 1) * 100
     )
     # of each mode, all with the most proofs are top
-    most = pl.col("solved").filter(DETOUR).max().over("case", "side")
+    most = pl.col("solved").filter(INCLUSION).max().over("case", "side")
     tops = d.with_columns(side=SIDE_OF).select(
         "case",
         "scheduler",
         "side",
-        top=pl.when(DETOUR)
+        top=pl.when(INCLUSION)
         .then(pl.col("solved") == most)
         .otherwise(pl.col("side") == "backoff"),
     )

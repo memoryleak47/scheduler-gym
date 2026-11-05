@@ -21,7 +21,8 @@ BENCHMODE_CPUS = Path("/run/benchmode/bench-cpus")
 # every scheduler in schedulers/, without the .rs suffix
 SCHEDULERS = tuple(sorted(p.stem for p in (ROOT / "schedulers").glob("*.rs")))
 # slowest first, so the long jobs don't end up as the tail of the run
-CASE_STUDIES = ("caviar", "lean-egg", "szalinski", "integ", "trig")
+# CASE_STUDIES = ("caviar", "lean-egg", "szalinski", "integ", "trig")
+CASE_STUDIES = ("lean-egg", "szalinski", "integ", "trig")
 
 
 def physical_cpus() -> list[int]:
@@ -55,7 +56,9 @@ class CopyPool:
     async def acquire(self, cpu: int) -> Path:
         if self.free:
             return self.free.pop()
-        copy = WORKDIR / self.case / str(self.count)
+        # the case name has to stay the last path component, some run.sh pick
+        # what to run based on `$(pwd)`
+        copy = WORKDIR / str(self.count) / self.case
         self.count += 1
         copy.parent.mkdir(parents=True, exist_ok=True)
         proc = await asyncio.create_subprocess_exec(
@@ -158,7 +161,9 @@ async def worker(
             running[cpu] = ""
         if not ok:
             log = BENCHDATA / f"{scheduler}.rs" / f"{case}.log"
-            tqdm.write(f"[{case}] scheduler '{scheduler}' FAILED (no entries), see {log}")
+            tqdm.write(
+                f"[{case}] scheduler '{scheduler}' FAILED (no entries), see {log}"
+            )
         bars[case].update()
 
 
