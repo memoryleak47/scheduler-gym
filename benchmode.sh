@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Switch the machine into a reproducible benchmarking mode and back.
 #
-#   sudo ./benchmode.sh on       disable boost + SMT, lock the frequency,
+#   sudo ./benchmode.sh on       disable boost + SMT, lock the frequency (amd-pstate passive),
 #                                confine system/user processes to the housekeeping CPU
 #   sudo ./benchmode.sh off      restore the settings saved by `on`
 #   ./benchmode.sh run CMD...    run CMD (as you) on the benchmark CPUs, e.g.
@@ -18,6 +18,7 @@ STATE_DIR=/run/benchmode
 STATE="$STATE_DIR/sysfs"
 SLICES_STATE="$STATE_DIR/slices"
 CPUS_STATE="$STATE_DIR/bench-cpus"
+PSTATE_STATUS="$CPU/amd_pstate/status"
 SLICES=(system.slice user.slice init.scope)
 HOUSEKEEPING_CPU="${HOUSEKEEPING_CPU:-0}"
 
@@ -62,8 +63,9 @@ cmd_on() {
 
     # save everything before changing anything, while all CPUs are still online
     {
-        # restore order matters: SMT and boost before the per-CPU frequencies
-        for f in "$CPU/smt/control" "$CPU/cpufreq/boost" $(cpufreq_files); do
+        # restore order matters: the driver mode first (switching it resets all cpufreq
+        # policies), then SMT and boost, then the per-CPU frequencies
+        for f in "$PSTATE_STATUS" "$CPU/smt/control" "$CPU/cpufreq/boost" $(cpufreq_files); do
             if [[ -e $f ]]; then echo "$f $(<"$f")"; fi
         done
     } > "$STATE.tmp"
@@ -72,6 +74,11 @@ cmd_on() {
     done > "$SLICES_STATE"
     mv "$STATE.tmp" "$STATE"
 
+    # in active (EPP) mode the firmware picks the clock and ignores boost=0 and
+    # scaling_max_freq, in passive mode the kernel sets it directly
+    if [[ -e $PSTATE_STATUS && $(<"$PSTATE_STATUS") != passive ]]; then
+        w "$PSTATE_STATUS" passive
+    fi
     w "$CPU/smt/control" off
     w "$CPU/cpufreq/boost" 0
     for c in $(online_cpus); do
@@ -125,6 +132,7 @@ cmd_run() {
 
 cmd_status() {
     echo "bench mode:  $([[ -e $STATE ]] && echo on || echo off)"
+    if [[ -e $PSTATE_STATUS ]]; then echo "amd_pstate:  $(<"$PSTATE_STATUS")"; fi
     echo "smt:         $(<"$CPU/smt/control")"
     echo "boost:       $(<"$CPU/cpufreq/boost")"
     local p="$CPU/cpu1/cpufreq"
