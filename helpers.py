@@ -16,7 +16,6 @@ FIGURES = ROOT / "figures"
 
 KEY = ("case", "scheduler", "run")
 Resource = Literal["time", "size"]
-Metric = Literal["cost", "time", "size"]
 Side = Literal["backoff", "source", "target", "class", "other"]
 COLORS: dict[Side, str] = {
     "backoff": "black",
@@ -49,10 +48,6 @@ BREAK = MplPath(
 # how the baseline is called in the plot texts
 BASELINE_NAME = "BackoffScheduler"
 MODES = "for each mode (source/target/class)"
-TOP_NOTE = (
-    f"{BASELINE_NAME} and the k with the lowest final cost per benchmark {MODES}"
-    " marked opaque"
-)
 
 
 def _bar_note(best: str) -> str:
@@ -64,10 +59,8 @@ def _bar_note(best: str) -> str:
 
 
 RESOURCES: dict[Resource, str] = {"time": "time [s]", "size": "e-graph size"}
-METRICS: dict[Metric, str] = {"cost": "cost", **RESOURCES}
 # the labels as ordered categories, so facets come in this order
 RESOURCE = pl.Enum(RESOURCES.values())
-METRIC = pl.Enum(METRICS.values())
 
 ENTRY_PATTERN = (
     r"costs=\[(?P<costs>[^\]]*)\], total_size=(?P<size>\S+), time=(?P<time>\S+), "
@@ -76,7 +69,7 @@ ENTRY_PATTERN = (
 CACHE = BENCHDATA / ".cache"
 
 
-def setup_style(dpi: int = 300):
+def setup_style(dpi: int = 100):
     mpl.rcParams["pdf.fonttype"] = 42
     p9.theme_set(
         p9.theme_minimal()
@@ -274,11 +267,11 @@ class _Strip(p9.labeller):
         return label_info
 
 
-def _facets(by: str, n: int, scales: Literal["free", "free_x"]) -> p9.facet_wrap:
-    """One column per case, `n` rows, one per value of `by`."""
+def _facets(scales: Literal["free", "free_x"]) -> p9.facet_wrap:
+    """One column per case, one row per resource."""
     return p9.facet_wrap(
-        ["title", by],
-        nrow=n,
+        ["title", "resource"],
+        nrow=len(RESOURCES),
         dir="v",
         scales=scales,
         # plotnine annotates `labeller` too narrowly, facet accepts any labeller
@@ -569,7 +562,7 @@ def solved_profile(
     curves = _titled(curves, fin, _tops(ends, ["case", "resource"], most, "last"))
     return (
         _steps(curves, "y", log_x)
-        + _facets("resource", len(RESOURCES), "free_x")
+        + _facets("free_x")
         + p9.coord_cartesian(ylim=(y_min, y_max))
         + p9.labs(
             x="",
@@ -637,7 +630,7 @@ def solved_budget(
     note = pl.format("fewer than {} proofs", pl.col("need"))
     return (
         _bars_noted(d, "gain", note, zoom=zoom, over=facet)
-        + _facets("resource", len(RESOURCES), "free")
+        + _facets("free")
         + p9.labs(
             x=f"less budget than {BASELINE_NAME} [%]",
             title=f"Budget to prove as many runs as {BASELINE_NAME}"
@@ -705,7 +698,7 @@ def cost_budget(
     note = pl.format("reached in {} of {} runs", pl.col("reached"), pl.col("runs"))
     return (
         _bars_noted(d, "gain", note, zoom=zoom, over=facet)
-        + _facets("resource", len(RESOURCES), "free")
+        + _facets("free")
         + p9.labs(
             x=f"less budget than {BASELINE_NAME} [%]",
             title=f"Budget to reach {BASELINE_NAME}'s final cost",
@@ -714,18 +707,6 @@ def cost_budget(
             " 1 − geomean over runs; higher is better;\n"
             + _bar_note("the largest saving"),
         )
-    )
-
-
-def _relative(
-    df: pl.DataFrame, fin: pl.DataFrame, metric: Metric, absolute: bool = False
-) -> pl.DataFrame:
-    """`df` with `rel` = `metric` / the run's smallest final one (or `metric`)."""
-    if absolute:
-        return df.with_columns(rel=pl.col(metric))
-    best = fin.group_by("case", "run").agg(best=pl.col(metric).min())
-    return df.join(best, on=["case", "run"]).with_columns(
-        rel=pl.col(metric) / pl.col("best")
     )
 
 
@@ -763,12 +744,16 @@ def quality(
     """Cost relative to the run's best final cost over resource, geomean over runs.
     `log_x`/`log_y`: log axes; `absolute`: plain cost (only the y scale changes)."""
     df, fin = select(df, schedulers=schedulers)
-    d = _per_resource(_relative(df, fin, "cost", absolute), "rel")
+    rel = pl.col("cost")
+    if not absolute:
+        df = df.join(fin.select(*KEY, "best"), on=KEY)
+        rel /= pl.col("best")
+    d = _per_resource(df.with_columns(rel=rel), "rel")
     by = ["case", "resource"]
     curves = _titled(_geomean_curves(d, by, _grid(d, by, log_x)), fin)
     return (
         _steps(curves, "rel", log_x)
-        + _facets("resource", len(RESOURCES), "free")
+        + _facets("free")
         + (p9.scale_y_log10() if log_y else p9.scale_y_continuous())
         + p9.labs(
             x="",
@@ -779,46 +764,8 @@ def quality(
                 if absolute
                 else "cost relative to the best final cost of each run"
             )
-            + f", geometric mean over runs;\n{TOP_NOTE};\nlower is better",
-        )
-    )
-
-
-def dev(
-    df: pl.DataFrame,
-    schedulers: Sequence[str] = SCHEDULERS,
-    *,
-    log_x: bool = False,
-    log_y: bool = False,
-    absolute: bool = False,
-) -> p9.ggplot:
-    """Cost, time and size relative to the run's smallest final one, per iteration.
-    `log_x`/`log_y`: log axes; `absolute`: plain values (only the y scale changes)."""
-    df, fin = select(df, schedulers=schedulers)
-    d = pl.concat(
-        _relative(df, fin, m, absolute).select(
-            *KEY,
-            "rel",
-            metric=pl.lit(label, METRIC),
-            x=pl.col("iteration").cast(pl.Float64),
-        )
-        for m, label in METRICS.items()
-    )
-    by = ["case", "metric"]
-    grid = _grid(d, by, log_x).with_columns(pl.col("x").round()).unique()
-    curves = _titled(_geomean_curves(d, by, grid), fin)
-    return (
-        _steps(curves, "rel", log_x)
-        + _facets("metric", len(METRICS), "free")
-        + (p9.scale_y_log10() if log_y else p9.scale_y_continuous())
-        + p9.labs(
-            x="iteration",
-            y="value (geomean)"
-            if absolute
-            else "value / smallest final value (geomean)",
-            title="Development per iteration",
-            subtitle="cost, time and e-graph size"
-            + ("" if absolute else " relative to the smallest final value of each run")
-            + f", geometric mean over runs;\n{TOP_NOTE};\nlower is better",
+            + ", geometric mean over runs;\n"
+            f"{BASELINE_NAME} and the k with the lowest final cost per benchmark"
+            f" {MODES} marked opaque;\nlower is better",
         )
     )
