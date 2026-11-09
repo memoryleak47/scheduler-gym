@@ -321,9 +321,11 @@ def _steps(
     )
 
 
-def _bars(d: pl.DataFrame, value: str, *, zoom: float = 100) -> p9.ggplot:
+def _bars(
+    d: pl.DataFrame, value: str, *, zoom: float = 100, over: Sequence[str] = ("case",)
+) -> p9.ggplot:
     """Bars of `value` per scheduler, cut at ±`zoom` with a // break.
-    Backoff is left out, it is the line at 0."""
+    Backoff is left out, it is the line at 0. `over`: the columns of a facet."""
     dtype = d["scheduler"].dtype
     assert isinstance(dtype, pl.Enum)
     top_down = [s for s in dtype.categories.reverse() if s != BASELINE]
@@ -337,10 +339,10 @@ def _bars(d: pl.DataFrame, value: str, *, zoom: float = 100) -> p9.ggplot:
         .with_columns(end=pl.col(value).clip(-zoom, zoom))
         .with_columns(
             reach=pl.col("end")
-            + pl.when(gain).then(0.3).otherwise(-0.3) * span.over("case"),
+            + pl.when(gain).then(0.3).otherwise(-0.3) * span.over(over),
             # where a cut bar is broken, a bit before its end
             gap=pl.col("end")
-            - pl.when(gain).then(0.08).otherwise(-0.08) * span.over("case"),
+            - pl.when(gain).then(0.08).otherwise(-0.08) * span.over(over),
         )
     )
     d = d.with_columns(
@@ -413,6 +415,11 @@ def ranking(
     )
 
 
+def _proved(solved_cost: float) -> pl.Expr:
+    """Whether the goal is proved, or the cost reached `solved_cost`."""
+    return (pl.col("cost") <= solved_cost) | pl.col("proved")
+
+
 def solved(
     df: pl.DataFrame,
     schedulers: Sequence[str] = SCHEDULERS,
@@ -424,7 +431,7 @@ def solved(
     `zoom`: bars are cut off at ±`zoom` percent, their labels still give the value."""
     _, fin = select(df, schedulers=schedulers)
     d = fin.group_by("case", "scheduler").agg(
-        solved=((pl.col("cost") <= solved_cost) | pl.col("proved")).sum(),
+        solved=_proved(solved_cost).sum(),
         runs=pl.len(),
     )
     base = d.filter(pl.col("scheduler") == BASELINE).select(
@@ -473,6 +480,15 @@ def _per_resource(df: pl.DataFrame, *cols: str) -> pl.DataFrame:
     )
 
 
+def _first_proofs(d: pl.DataFrame, proved: pl.Expr) -> pl.DataFrame:
+    """Per run and resource, `x` at the first proof; runs without one are left out."""
+    return (
+        d.filter(proved)
+        .group_by(*KEY, "resource", maintain_order=True)
+        .agg(pl.col("x").first())
+    )
+
+
 def solved_profile(
     df: pl.DataFrame,
     schedulers: Sequence[str] = SCHEDULERS,
@@ -488,11 +504,9 @@ def solved_profile(
     group = ["case", "resource", "scheduler"]
     d = _per_resource(df, "cost", "proved")
     runs = fin.group_by("case", "scheduler").agg(runs=pl.len())
-    proved = (pl.col("cost") <= solved_cost) | pl.col("proved")
+    proved = _proved(solved_cost)
     proofs = (
-        d.filter(proved)
-        .group_by(*KEY, "resource", maintain_order=True)
-        .agg(pl.col("x").first())
+        _first_proofs(d, proved)
         .join(runs, on=["case", "scheduler"])
         .with_columns(y=pl.col("x").rank("ordinal").over(group) / pl.col("runs"))
     )
@@ -530,8 +544,7 @@ def solved_profile(
     return (
         # curves that stay at 0 get no star
         _steps(curves, "y", ["case", "resource"], log_x, star_if=pl.col("y") > 0)
-        # few proof cases, so the resources go side by side
-        + _facets("resource", 1, "free_x")
+        + _facets("resource", len(RESOURCES), "free_x")
         + p9.coord_cartesian(ylim=(y_min, y_max))
         + p9.labs(
             x="",
@@ -542,6 +555,106 @@ def solved_profile(
             " (lhs/rhs/class,\nties go to the smaller budget at the last proof)"
             " marked opaque;\n"
             "★ marks the last proof found; higher is better",
+        )
+    )
+
+
+def solved_budget(
+    df: pl.DataFrame,
+    schedulers: Sequence[str] = SCHEDULERS,
+    *,
+    solved_cost: float = 1,
+    zoom: float = 100,
+) -> p9.ggplot:
+    """Resource budget a scheduler needs to prove as many runs as backoff does in
+    total, as savings over backoff's budget in percent; schedulers that prove fewer
+    get no bar. `zoom`: bars are cut off at ±`zoom` percent, their labels still give
+    the value."""
+    df, fin = select(df, schedulers=schedulers)
+    facet = ["case", "resource"]
+    proofs = _first_proofs(_per_resource(df, "cost", "proved"), _proved(solved_cost))
+    need = (
+        proofs.filter(pl.col("scheduler") == BASELINE)
+        .group_by(facet)
+        .agg(need=pl.len())
+    )
+    for case in fin["case"].unique():
+        assert case in need["case"], f"{BASELINE} solved no runs of {case}"
+    bases = ", ".join(
+        f"{c} {n}"
+        for c, n in need.group_by("case")
+        .agg(pl.col("need").first())
+        .sort("case")
+        .iter_rows()
+    )
+    # the budget is where the scheduler's `need`th proof is found
+    budgets = (
+        proofs.join(need, on=facet)
+        .filter(pl.col("x").rank("ordinal").over(*facet, "scheduler") == pl.col("need"))
+        .select(*facet, "scheduler", budget="x")
+    )
+    base = budgets.filter(pl.col("scheduler") == BASELINE).select(*facet, base="budget")
+    every = (
+        fin.select("case", "scheduler")
+        .unique()
+        .join(
+            pl.DataFrame({"resource": RESOURCES.values()}, {"resource": RESOURCE}),
+            how="cross",
+        )
+        .join(need, on=facet)
+    )
+    d = (
+        every.join(budgets, on=[*facet, "scheduler"], how="left")
+        .join(base, on=facet)
+        .with_columns(gain=(1 - pl.col("budget") / pl.col("base")) * 100, side=SIDE_OF)
+    )
+    # backoff is always top; per resource, of each mode the one with the smallest
+    # budget, ties going to the smallest k
+    tops = d.sort("budget", K_OF, nulls_last=True).select(
+        *facet, "scheduler", "side", top=_top(*facet)
+    )
+    d = _titled(d.drop("side"), fin, tops, picks=False)
+    # the note goes to the side of 0 with more room
+    gain = pl.col("gain").clip(-zoom, zoom)
+    left = (-gain.min().over(facet) > gain.max().over(facet)).fill_null(False)
+    short = (
+        d.with_columns(left=left)
+        .filter(pl.col("gain").is_null() & (pl.col("scheduler") != BASELINE))
+        .with_columns(
+            text=pl.when("left")
+            .then(pl.format("fewer than {} proofs ", pl.col("need")))
+            .otherwise(pl.format(" fewer than {} proofs", pl.col("need")))
+        )
+    )
+    note = p9.aes(x=0, y="scheduler", label="text")
+    return (
+        _bars(d.filter(pl.col("gain").is_not_null()), "gain", zoom=zoom, over=facet)
+        + p9.geom_text(
+            note,
+            data=short.filter(~pl.col("left")),
+            inherit_aes=False,
+            ha="left",
+            size=7,
+            color="gray",
+        )
+        + p9.geom_text(
+            note,
+            data=short.filter(pl.col("left")),
+            inherit_aes=False,
+            ha="right",
+            size=7,
+            color="gray",
+        )
+        + _facets("resource", len(RESOURCES), "free")
+        + p9.labs(
+            x=f"less budget than {BASELINE_NAME} [%]",
+            title=f"Budget to prove as many runs as {BASELINE_NAME}"
+            " in the proof case studies",
+            subtitle="time / e-graph size until as many runs are proved as"
+            f" {BASELINE_NAME} proves in total\n({bases}), relative to"
+            f" {BASELINE_NAME}'s; higher is better;\nthe k with the smallest budget"
+            f" per benchmark {MODES} marked opaque;\n"
+            f"// marks bar cut off; the line at 0 is {BASELINE_NAME}",
         )
     )
 
