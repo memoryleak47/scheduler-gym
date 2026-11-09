@@ -10,7 +10,9 @@ The case-studies directory contains case studies that we use to measure the qual
 
 ## Benchmarking
 
-To run the benchmarks, run `uv run bench.py`. This will write data to `benchdata`.
+To run the benchmarks, run `uv run bench.py`.
+See `uv run bench.py --help` for `--schedulers` and the various limit options.
+Limits are mutually exclusive.
 
 For reproducible timings, switch to bench mode first (disables boost and SMT, locks the CPU frequency, and confines system and user services to CPU 0):
 
@@ -18,6 +20,7 @@ For reproducible timings, switch to bench mode first (disables boost and SMT, lo
 sudo ./benchmode.sh on
 ./benchmode.sh run uv run bench.py --time-limit 10    --schedulers backoff,random,class-cost,source-cost,outcome-cost
 ./benchmode.sh run uv run bench.py --node-limit 10000 --schedulers backoff,random,class-cost,source-cost,outcome-cost
+./benchmode.sh run uv run bench.py --native-limit     --schedulers backoff,random,class-cost,source-cost,outcome-cost
 sudo ./benchmode.sh off
 ```
 

@@ -102,6 +102,11 @@ def parse_args() -> tuple[Path, dict[str, str], list[str]]:
         metavar="NODES",
         help="stop each run at an e-graph size of NODES, with no time limit",
     )
+    limit.add_argument(
+        "--native-limit",
+        action="store_true",
+        help="keep each case study's own node and time limits",
+    )
     parser.add_argument(
         "--schedulers",
         metavar="PREFIXES",
@@ -122,6 +127,14 @@ def parse_args() -> tuple[Path, dict[str, str], list[str]]:
             if not any(re.fullmatch(rf"{re.escape(p)}(?:-\d+)?", s) for s in schedulers)
         ]:
             parser.error(f"no scheduler matches {', '.join(unmatched)}")
+    if args.native_limit:
+        # empty, not absent, so values inherited from the shell don't leak in;
+        # gym-common.rs treats empty as unset
+        return (
+            BENCHDATA / "native",
+            {"GYM_TIME_LIMIT": "", "GYM_NODE_LIMIT": ""},
+            schedulers,
+        )
     if args.time_limit is not None:
         if args.time_limit <= 0:
             parser.error("--time-limit must be positive")
