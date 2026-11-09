@@ -16,26 +16,26 @@ FIGURES = ROOT / "figures"
 
 KEY = ("case", "scheduler", "run")
 Resource = Literal["time", "size"]
-Side = Literal["backoff", "source", "outcome", "class", "other"]
+Side = Literal["backoff", "source", "outcome", "class", "random"]
 COLORS: dict[Side, str] = {
     "backoff": "black",
     "source": "#E69F00",  # orange
     "outcome": "#0072B2",  # blue
     "class": "#009E73",  # bluish green
-    "other": "#CC79A7",  # reddish purple
+    "random": "#CC79A7",  # reddish purple
 }  # Okabe-Ito colorblind-safe palette
 SIDE = pl.Enum(COLORS.keys())
 _NAME = pl.col("scheduler").cast(pl.String)
 SIDE_OF = (
     pl.when(_NAME == "backoff")
     .then(pl.lit("backoff"))
-    .otherwise(
-        _NAME.str.extract(r"^(source|outcome|class)-cost-\d+$").fill_null("other")
-    )
+    .when(_NAME.str.contains(r"^random-\d+$"))
+    .then(pl.lit("random"))
+    .otherwise(_NAME.str.extract(r"^(source|outcome|class)-cost-\d+$"))
     .cast(SIDE)
 )
 K_OF = _NAME.str.extract(r"-(\d+)$").cast(pl.Int64)
-COST_SIDE = pl.col("side").is_in(["source", "outcome", "class"])
+COST_SIDE = pl.col("side").is_in(["source", "outcome", "class", "random"])
 # the scheduler the bar charts are relative to
 BASELINE = "backoff"
 # alpha of the curves and bars that are not the best of their side
@@ -47,7 +47,7 @@ BREAK = MplPath(
 )
 # how the baseline is called in the plot texts
 BASELINE_NAME = "BackoffScheduler"
-MODES = "for each mode (source/outcome/class)"
+MODES = "for each mode (source/outcome/class/random)"
 
 
 def _bar_note(best: str) -> str:
@@ -163,6 +163,9 @@ def select(
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Rows of `schedulers` in that order, and finals: one row per run with the final
     cost, the run's best final cost, resources to reach it, `side` and `top`."""
+    sides = pl.DataFrame({"scheduler": schedulers}).select("scheduler", side=SIDE_OF)
+    if unknown := sides.filter(pl.col("side").is_null())["scheduler"].to_list():
+        raise ValueError(f"schedulers without a side: {unknown}")
     df = df.filter(pl.col("scheduler").is_in(schedulers)).with_columns(
         pl.col("scheduler").cast(pl.String).cast(pl.Enum(schedulers))
     )
@@ -351,8 +354,8 @@ def _bars(
         )
         + p9.scale_y_discrete(
             limits=top_down,
-            # class-cost-400 -> class 400
-            labels=[re.sub(r"-cost-(\d+)$", r" \1", s) for s in top_down],
+            # class-cost-400 -> class 400, random-400 -> random 400
+            labels=[re.sub(r"(-cost)?-(\d+)$", r" \2", s) for s in top_down],
         )
         + p9.scale_color_manual(values=COLORS)
         + p9.guides(color="none")
@@ -570,7 +573,7 @@ def solved_profile(
             title="Fraction of problems proven within a time / e-graph size budget"
             " in the proof case studies",
             subtitle=f"{BASELINE_NAME} and the k with the most proofs for each mode"
-            " (source/outcome/class,\nties go to the smaller budget at the last proof)"
+            " (source/outcome/class/random,\nties go to the smaller budget at the last proof)"
             " marked opaque;\nhigher is better",
         )
     )
