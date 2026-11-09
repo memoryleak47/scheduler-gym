@@ -1,12 +1,12 @@
 # scheduler gym
 
 In this repo I want to collect a couple of benchmarks, and see how different schedulers fare on them.
-In particular, I want to benchmark the source/target/class cost idea.
+In particular, I want to benchmark the source/outcome/class cost idea.
 
 The schedulers directory contains rust files which define `sched_iter` and `sched_init` functions. Those concatted together with `gym-common.rs` define a run function, similar to eggs `Runner::run`.
 The case-studies directory contains case studies that we use to measure the quality of schedulers.
 
-`source-cost`/`target-cost`/`class-cost` were previously called `inclusion-lhs`/`-rhs`/`-class` (and before that `detour`).
+`source-cost`/`outcome-cost`/`class-cost` were previously called `inclusion-lhs`/`-rhs`/`-class` (and before that `detour`); `outcome-cost` was briefly `target-cost`.
 
 ## Benchmarking
 

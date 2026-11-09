@@ -16,11 +16,11 @@ FIGURES = ROOT / "figures"
 
 KEY = ("case", "scheduler", "run")
 Resource = Literal["time", "size"]
-Side = Literal["backoff", "source", "target", "class", "other"]
+Side = Literal["backoff", "source", "outcome", "class", "other"]
 COLORS: dict[Side, str] = {
     "backoff": "black",
     "source": "#E69F00",  # orange
-    "target": "#0072B2",  # blue
+    "outcome": "#0072B2",  # blue
     "class": "#009E73",  # bluish green
     "other": "#CC79A7",  # reddish purple
 }  # Okabe-Ito colorblind-safe palette
@@ -30,12 +30,12 @@ SIDE_OF = (
     pl.when(_NAME == "backoff")
     .then(pl.lit("backoff"))
     .otherwise(
-        _NAME.str.extract(r"^(source|target|class)-cost-\d+$").fill_null("other")
+        _NAME.str.extract(r"^(source|outcome|class)-cost-\d+$").fill_null("other")
     )
     .cast(SIDE)
 )
 K_OF = _NAME.str.extract(r"-(\d+)$").cast(pl.Int64)
-COST_SIDE = pl.col("side").is_in(["source", "target", "class"])
+COST_SIDE = pl.col("side").is_in(["source", "outcome", "class"])
 # the scheduler the bar charts are relative to
 BASELINE = "backoff"
 # alpha of the curves and bars that are not the best of their side
@@ -47,7 +47,7 @@ BREAK = MplPath(
 )
 # how the baseline is called in the plot texts
 BASELINE_NAME = "BackoffScheduler"
-MODES = "for each mode (source/target/class)"
+MODES = "for each mode (source/outcome/class)"
 
 
 def _bar_note(best: str) -> str:
@@ -351,8 +351,8 @@ def _bars(
         )
         + p9.scale_y_discrete(
             limits=top_down,
-            # class-cost-400 -> class cost 400
-            labels=[s.replace("-", " ") for s in top_down],
+            # class-cost-400 -> class 400
+            labels=[re.sub(r"-cost-(\d+)$", r" \1", s) for s in top_down],
         )
         + p9.scale_color_manual(values=COLORS)
         + p9.guides(color="none")
@@ -570,7 +570,7 @@ def solved_profile(
             title="Fraction of problems proven within a time / e-graph size budget"
             " in the proof case studies",
             subtitle=f"{BASELINE_NAME} and the k with the most proofs for each mode"
-            " (source/target/class,\nties go to the smaller budget at the last proof)"
+            " (source/outcome/class,\nties go to the smaller budget at the last proof)"
             " marked opaque;\nhigher is better",
         )
     )
