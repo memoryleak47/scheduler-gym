@@ -30,7 +30,9 @@ _NAME = pl.col("scheduler").cast(pl.String)
 SIDE_OF = (
     pl.when(_NAME == "backoff")
     .then(pl.lit("backoff"))
-    .otherwise(_NAME.str.extract(r"^(source|target|class)-cost-\d+$").fill_null("other"))
+    .otherwise(
+        _NAME.str.extract(r"^(source|target|class)-cost-\d+$").fill_null("other")
+    )
     .cast(SIDE)
 )
 K_OF = _NAME.str.extract(r"-(\d+)$").cast(pl.Int64)
@@ -386,6 +388,49 @@ def _bars(
     )
 
 
+def _bars_noted(
+    d: pl.DataFrame,
+    value: str,
+    note: pl.Expr,
+    *,
+    zoom: float = 100,
+    over: Sequence[str] = ("case",),
+) -> p9.ggplot:
+    """`_bars` of the rows with a `value`; the others get `note` in gray at 0,
+    on the side of 0 with more room."""
+    gain = pl.col(value).clip(-zoom, zoom)
+    left = (-gain.min().over(over) > gain.max().over(over)).fill_null(False)
+    short = (
+        d.with_columns(left=left)
+        .filter(pl.col(value).is_null() & (pl.col("scheduler") != BASELINE))
+        .with_columns(
+            text=pl.when("left")
+            .then(pl.format("{} ", note))
+            .otherwise(pl.format(" {}", note))
+        )
+    )
+    aes = p9.aes(x=0, y="scheduler", label="text")
+    return (
+        _bars(d.filter(pl.col(value).is_not_null()), value, zoom=zoom, over=over)
+        + p9.geom_text(
+            aes,
+            data=short.filter(~pl.col("left")),
+            inherit_aes=False,
+            ha="left",
+            size=7,
+            color="gray",
+        )
+        + p9.geom_text(
+            aes,
+            data=short.filter(pl.col("left")),
+            inherit_aes=False,
+            ha="right",
+            size=7,
+            color="gray",
+        )
+    )
+
+
 def ranking(
     df: pl.DataFrame,
     schedulers: Sequence[str] = SCHEDULERS,
@@ -614,37 +659,9 @@ def solved_budget(
         *facet, "scheduler", "side", top=_top(*facet)
     )
     d = _titled(d.drop("side"), fin, tops, picks=False)
-    # the note goes to the side of 0 with more room
-    gain = pl.col("gain").clip(-zoom, zoom)
-    left = (-gain.min().over(facet) > gain.max().over(facet)).fill_null(False)
-    short = (
-        d.with_columns(left=left)
-        .filter(pl.col("gain").is_null() & (pl.col("scheduler") != BASELINE))
-        .with_columns(
-            text=pl.when("left")
-            .then(pl.format("fewer than {} proofs ", pl.col("need")))
-            .otherwise(pl.format(" fewer than {} proofs", pl.col("need")))
-        )
-    )
-    note = p9.aes(x=0, y="scheduler", label="text")
+    note = pl.format("fewer than {} proofs", pl.col("need"))
     return (
-        _bars(d.filter(pl.col("gain").is_not_null()), "gain", zoom=zoom, over=facet)
-        + p9.geom_text(
-            note,
-            data=short.filter(~pl.col("left")),
-            inherit_aes=False,
-            ha="left",
-            size=7,
-            color="gray",
-        )
-        + p9.geom_text(
-            note,
-            data=short.filter(pl.col("left")),
-            inherit_aes=False,
-            ha="right",
-            size=7,
-            color="gray",
-        )
+        _bars_noted(d, "gain", note, zoom=zoom, over=facet)
         + _facets("resource", len(RESOURCES), "free")
         + p9.labs(
             x=f"less budget than {BASELINE_NAME} [%]",
@@ -654,6 +671,79 @@ def solved_budget(
             f" {BASELINE_NAME} proves in total\n({bases}), relative to"
             f" {BASELINE_NAME}'s; higher is better;\nthe k with the smallest budget"
             f" per benchmark {MODES} marked opaque;\n"
+            f"// marks bar cut off; the line at 0 is {BASELINE_NAME}",
+        )
+    )
+
+
+def cost_budget(
+    df: pl.DataFrame,
+    schedulers: Sequence[str] = SCHEDULERS,
+    *,
+    zoom: float = 100,
+) -> p9.ggplot:
+    """Resource budget until a run first reaches backoff's final cost of that run, as
+    savings over backoff's budget in percent, 1 − geomean over runs; schedulers that
+    miss it in some run get no bar.
+    `zoom`: bars are cut off at ±`zoom` percent, their labels still give the value."""
+    df, fin = select(df, schedulers=schedulers)
+    facet = ["case", "resource"]
+    goal = fin.filter(pl.col("scheduler") == BASELINE).select(
+        "case", "run", goal="cost"
+    )
+    reached = (
+        _per_resource(df, "cost")
+        .join(goal, on=["case", "run"])
+        .filter(pl.col("cost") <= pl.col("goal"))
+        .group_by(*KEY, "resource", maintain_order=True)
+        .agg(budget=pl.col("x").first())
+    )
+    base = reached.filter(pl.col("scheduler") == BASELINE).select(
+        "case", "run", "resource", base="budget"
+    )
+    budgets = (
+        reached.join(base, on=["case", "run", "resource"])
+        .group_by(*facet, "scheduler")
+        .agg(
+            ratio=_geomean(pl.col("budget") / pl.col("base")),
+            reached=pl.len(),
+        )
+    )
+    every = (
+        fin.group_by("case", "scheduler")
+        .agg(runs=pl.len())
+        .join(
+            pl.DataFrame({"resource": RESOURCES.values()}, {"resource": RESOURCE}),
+            how="cross",
+        )
+    )
+    d = (
+        every.join(budgets, on=[*facet, "scheduler"], how="left")
+        .with_columns(pl.col("reached").fill_null(0))
+        .with_columns(
+            gain=pl.when(pl.col("reached") == pl.col("runs")).then(
+                (1 - pl.col("ratio")) * 100
+            ),
+            side=SIDE_OF,
+        )
+    )
+    # backoff is always top; per resource, of each mode the one with the largest
+    # saving, ties going to the smallest k
+    tops = d.sort(-pl.col("gain"), K_OF, nulls_last=True).select(
+        *facet, "scheduler", "side", top=_top(*facet)
+    )
+    d = _titled(d.drop("side"), fin, tops, picks=False)
+    note = pl.format("reached in {} of {} runs", pl.col("reached"), pl.col("runs"))
+    return (
+        _bars_noted(d, "gain", note, zoom=zoom, over=facet)
+        + _facets("resource", len(RESOURCES), "free")
+        + p9.labs(
+            x=f"less budget than {BASELINE_NAME} [%]",
+            title=f"Budget to reach {BASELINE_NAME}'s final cost",
+            subtitle="time / e-graph size until a run first reaches"
+            f" {BASELINE_NAME}'s final cost,\nrelative to {BASELINE_NAME}'s;"
+            " 1 − geomean over runs; higher is better;\nthe k with the largest"
+            f" saving per benchmark {MODES} marked opaque;\n"
             f"// marks bar cut off; the line at 0 is {BASELINE_NAME}",
         )
     )
