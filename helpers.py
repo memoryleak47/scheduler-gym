@@ -17,11 +17,11 @@ FIGURES = ROOT / "figures"
 KEY = ("case", "scheduler", "run")
 Resource = Literal["time", "size"]
 Metric = Literal["cost", "time", "size"]
-Side = Literal["backoff", "lhs", "rhs", "class", "other"]
+Side = Literal["backoff", "source", "target", "class", "other"]
 COLORS: dict[Side, str] = {
     "backoff": "black",
-    "lhs": "#E69F00",  # orange
-    "rhs": "#0072B2",  # blue
+    "source": "#E69F00",  # orange
+    "target": "#0072B2",  # blue
     "class": "#009E73",  # bluish green
     "other": "#CC79A7",  # reddish purple
 }  # Okabe-Ito colorblind-safe palette
@@ -30,11 +30,11 @@ _NAME = pl.col("scheduler").cast(pl.String)
 SIDE_OF = (
     pl.when(_NAME == "backoff")
     .then(pl.lit("backoff"))
-    .otherwise(_NAME.str.extract(r"^inclusion-(lhs|rhs|class)-\d+$").fill_null("other"))
+    .otherwise(_NAME.str.extract(r"^(source|target|class)-cost-\d+$").fill_null("other"))
     .cast(SIDE)
 )
 K_OF = _NAME.str.extract(r"-(\d+)$").cast(pl.Int64)
-INCLUSION = pl.col("side").is_in(["lhs", "rhs", "class"])
+COST_SIDE = pl.col("side").is_in(["source", "target", "class"])
 # the scheduler the bar charts are relative to
 BASELINE = "backoff"
 # alpha of the curves and bars that are not the best of their side
@@ -46,7 +46,7 @@ BREAK = MplPath(
 )
 # how the baseline is called in the plot texts
 BASELINE_NAME = "BackoffScheduler"
-MODES = "for each mode (lhs/rhs/class)"
+MODES = "for each mode (source/target/class)"
 TOP_NOTE = (
     f"{BASELINE_NAME} and the k with the lowest final cost per benchmark {MODES}"
     " marked opaque"
@@ -206,7 +206,7 @@ def _geomean(e: pl.Expr) -> pl.Expr:
 def _top(*over: str) -> pl.Expr:
     """Backoff, and of each mode the first row per `over` and side."""
     return (
-        pl.when(INCLUSION)
+        pl.when(COST_SIDE)
         .then(pl.int_range(pl.len()).over(*over, "side") == 0)
         .otherwise(pl.col("side") == "backoff")
     )
@@ -225,7 +225,7 @@ def _titled(
     if tops is None:
         tops = fin.select("case", "scheduler", "side", "top").unique()
     by = [c for c in tops.columns if c not in ("scheduler", "side", "top")]
-    top = pl.col("top") & INCLUSION
+    top = pl.col("top") & COST_SIDE
     pick = pl.format("{} {}", pl.col("side").cast(pl.String), K_OF)
     runs = fin.group_by("case").agg(runs=pl.col("run").n_unique())
     titles = (
@@ -372,8 +372,8 @@ def _bars(
         )
         + p9.scale_y_discrete(
             limits=top_down,
-            # inclusion-class-400 -> class 400
-            labels=[s.removeprefix("inclusion-").replace("-", " ") for s in top_down],
+            # class-cost-400 -> class cost 400
+            labels=[s.replace("-", " ") for s in top_down],
         )
         + p9.scale_color_manual(values=COLORS)
         + p9.guides(color="none")
@@ -444,12 +444,12 @@ def solved(
         gain=(pl.col("solved") / pl.col("base") - 1) * 100
     )
     # of each mode, all with the most proofs are top
-    most = pl.col("solved").filter(INCLUSION).max().over("case", "side")
+    most = pl.col("solved").filter(COST_SIDE).max().over("case", "side")
     tops = d.with_columns(side=SIDE_OF).select(
         "case",
         "scheduler",
         "side",
-        top=pl.when(INCLUSION)
+        top=pl.when(COST_SIDE)
         .then(pl.col("solved") == most)
         .otherwise(pl.col("side") == "backoff"),
     )
@@ -552,7 +552,7 @@ def solved_profile(
             title="Fraction of problems proven within a time / e-graph size budget"
             " in the proof case studies",
             subtitle=f"{BASELINE_NAME} and the k with the most proofs for each mode"
-            " (lhs/rhs/class,\nties go to the smaller budget at the last proof)"
+            " (source/target/class,\nties go to the smaller budget at the last proof)"
             " marked opaque;\n"
             "★ marks the last proof found; higher is better",
         )
