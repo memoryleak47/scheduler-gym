@@ -53,10 +53,15 @@ TOP_NOTE = (
     f"{BASELINE_NAME} and the k with the lowest final cost per benchmark {MODES}"
     " marked opaque"
 )
-BAR_NOTE = (
-    f"k with the lowest final cost per benchmark {MODES} marked opaque;\n"
-    f"// marks bar cut off; the line at 0 is {BASELINE_NAME}"
-)
+
+
+def _bar_note(best: str) -> str:
+    """Last lines of a bar chart's subtitle, the opaque bars being the k with `best`."""
+    return (
+        f"the k with {best} per benchmark {MODES} marked opaque;\n"
+        f"// marks bar cut off; the line at 0 is {BASELINE_NAME}"
+    )
+
 
 RESOURCES: dict[Resource, str] = {"time": "time [s]", "size": "e-graph size"}
 METRICS: dict[Metric, str] = {"cost": "cost", **RESOURCES}
@@ -71,18 +76,18 @@ ENTRY_PATTERN = (
 CACHE = BENCHDATA / ".cache"
 
 
-def setup_style():
+def setup_style(dpi: int = 300):
     mpl.rcParams["pdf.fonttype"] = 42
     p9.theme_set(
         p9.theme_minimal()
         + p9.theme(
-            panel_grid_minor=p9.element_line(color="#EBEBEB", size=0.5),
+            # panel_grid_minor=p9.element_line(color="#EBEBEB", size=0.5),
             #     panel_grid_minor=p9.element_blank(),
             #     strip_text=p9.element_text(size=9, weight="bold", ha="left"),
             #     legend_title=p9.element_blank(),
             #     plot_title=p9.element_text(size=11, weight="bold", ha="left"),
             #     plot_title_position="plot",
-            dpi=300,
+            dpi=dpi,
         )
     )
 
@@ -179,15 +184,12 @@ def select(
     )
     fin = fin.join(reached, on=KEY, how="left")
 
-    # backoff is always top; of each mode the one with the lowest geomean of final cost
-    # relative to the best final cost of each run, ties going to the smallest k
-    top = (
-        fin.group_by("case", "scheduler")
-        .agg(ratio=_geomean(pl.col("cost") / pl.col("best")))
-        .with_columns(side=SIDE_OF)
-        .sort("ratio", K_OF)
-        .select("case", "scheduler", "side", top=_top("case"))
+    # of each mode the one with the lowest geomean of final cost relative to the best
+    # final cost of each run
+    ratios = fin.group_by("case", "scheduler").agg(
+        ratio=_geomean(pl.col("cost") / pl.col("best"))
     )
+    top = _tops(ratios, ["case"], "ratio")
     return df, fin.join(top, on=["case", "scheduler"], how="left")
 
 
@@ -211,6 +213,16 @@ def _top(*over: str) -> pl.Expr:
         pl.when(COST_SIDE)
         .then(pl.int_range(pl.len()).over(*over, "side") == 0)
         .otherwise(pl.col("side") == "backoff")
+    )
+
+
+def _tops(d: pl.DataFrame, by: Sequence[str], *keys: str | pl.Expr) -> pl.DataFrame:
+    """`side` and `top` per `by` and scheduler: backoff is always top, and of each mode
+    the first by `keys` (nulls last), ties going to the smallest k."""
+    return (
+        d.with_columns(side=SIDE_OF)
+        .sort(*keys, K_OF, nulls_last=True)
+        .select(*by, "scheduler", "side", top=_top(*by))
     )
 
 
@@ -274,44 +286,17 @@ def _facets(by: str, n: int, scales: Literal["free", "free_x"]) -> p9.facet_wrap
     )
 
 
-def _steps(
-    d: pl.DataFrame,
-    y: str,
-    by: list[str],
-    log_x: bool,
-    *,
-    star_if: pl.Expr | bool = True,
-) -> p9.ggplot:
-    """Step lines per scheduler, top ones opaque, starred where final if `star_if`."""
+def _steps(d: pl.DataFrame, y: str, log_x: bool) -> p9.ggplot:
+    """Step lines per scheduler, top ones opaque."""
     top = d.filter(pl.col("top"))
     # legend with only the sides present
     breaks = [side for side in COLORS if side in d["side"]]
-    # the first point per group and scheduler where `y` reaches its final value
-    group = [*by, "scheduler"]
-    last = pl.col(y).last().over(group)
-    stars = (
-        d.sort("x", maintain_order=True)
-        .filter((pl.col(y) - last).abs() <= 1e-9 * last.abs())
-        .group_by(group)
-        .first()
-        .filter(star_if & pl.col("top"))
-    )
     return (
         p9.ggplot(d, p9.aes("x", y, color="side", group="scheduler"))
         + p9.geom_step(data=d.filter(~pl.col("top")), size=0.5, alpha=REST_ALPHA)
         # a white halo, so the top curves stand out where they cross the rest
         + p9.geom_step(data=top, size=2.4, color="white")
         + p9.geom_step(data=top, size=1.4)
-        # filled in the curve's color, with a black edge to stand out from the curve
-        + p9.geom_point(
-            p9.aes(fill="side"),
-            data=stars,
-            shape="*",
-            size=6,
-            color="black",
-            stroke=0.3,
-            show_legend=False,
-        )
         + (p9.scale_x_log10() if log_x else p9.scale_x_continuous())
         + p9.scale_color_manual(
             values=COLORS,
@@ -319,7 +304,6 @@ def _steps(
             labels=[BASELINE_NAME if s == BASELINE else s for s in breaks],
             name="scheduler",
         )
-        + p9.scale_fill_manual(values=COLORS, breaks=breaks)
     )
 
 
@@ -455,7 +439,7 @@ def ranking(
             x=f"final cost reduction over {BASELINE_NAME} [%]",
             title=f"Final cost relative to {BASELINE_NAME}",
             subtitle=f"1 − geomean over runs of final cost / {BASELINE_NAME}'s final"
-            f" cost;\n{BAR_NOTE}; higher is better",
+            f" cost; higher is better;\n{_bar_note('the lowest final cost')}",
         )
     )
 
@@ -502,12 +486,11 @@ def solved(
         _bars(_titled(d, fin, tops, picks=False), "gain", zoom=zoom)
         + p9.facet_wrap("title", nrow=1, scales="free")
         + p9.labs(
-            x=f"more solved runs than {BASELINE} [%]",
+            x=f"more solved runs than {BASELINE_NAME} [%]",
             title="Proved goals in the proof case studies",
-            subtitle=f"runs that proved the goal, relative to {BASELINE}'s;\n"
-            f"{BASELINE} solved {bases}; higher is better;\n"
-            f"the k with the most proofs per benchmark {MODES} marked opaque;\n"
-            f"// = bar cut off; the line at 0 is {BASELINE}",
+            subtitle=f"runs that proved the goal, relative to {BASELINE_NAME}'s;\n"
+            f"{BASELINE_NAME} solved {bases}; higher is better;\n"
+            + _bar_note("the most proofs"),
         )
     )
 
@@ -570,7 +553,7 @@ def solved_profile(
             on=group,
             how="left",
         )
-        .with_columns(pl.col("y", "n").fill_null(0), side=SIDE_OF)
+        .with_columns(pl.col("y", "n").fill_null(0))
     )
     # step curves from 0 at `lo` through the proofs to `hi`
     curves = pl.concat(
@@ -580,15 +563,12 @@ def solved_profile(
             ends.select(*group, x="hi", y="y"),
         ]
     ).sort("x", maintain_order=True)
-    # backoff is always top; per resource, of each mode the one with the most proofs,
-    # ties going to the smallest budget of the last proof, then to the smallest k
-    tops = ends.sort(
-        "n", "last", K_OF, descending=[True, False, False], nulls_last=True
-    ).select(*group, "side", top=_top("case", "resource"))
-    curves = _titled(curves, fin, tops)
+    # per resource, of each mode the one with the most proofs, ties going to the
+    # smallest budget of the last proof
+    most = -pl.col("n").cast(pl.Int64)
+    curves = _titled(curves, fin, _tops(ends, ["case", "resource"], most, "last"))
     return (
-        # curves that stay at 0 get no star
-        _steps(curves, "y", ["case", "resource"], log_x, star_if=pl.col("y") > 0)
+        _steps(curves, "y", log_x)
         + _facets("resource", len(RESOURCES), "free_x")
         + p9.coord_cartesian(ylim=(y_min, y_max))
         + p9.labs(
@@ -598,8 +578,7 @@ def solved_profile(
             " in the proof case studies",
             subtitle=f"{BASELINE_NAME} and the k with the most proofs for each mode"
             " (source/target/class,\nties go to the smaller budget at the last proof)"
-            " marked opaque;\n"
-            "★ marks the last proof found; higher is better",
+            " marked opaque;\nhigher is better",
         )
     )
 
@@ -651,14 +630,10 @@ def solved_budget(
     d = (
         every.join(budgets, on=[*facet, "scheduler"], how="left")
         .join(base, on=facet)
-        .with_columns(gain=(1 - pl.col("budget") / pl.col("base")) * 100, side=SIDE_OF)
+        .with_columns(gain=(1 - pl.col("budget") / pl.col("base")) * 100)
     )
-    # backoff is always top; per resource, of each mode the one with the smallest
-    # budget, ties going to the smallest k
-    tops = d.sort("budget", K_OF, nulls_last=True).select(
-        *facet, "scheduler", "side", top=_top(*facet)
-    )
-    d = _titled(d.drop("side"), fin, tops, picks=False)
+    # per resource, of each mode the one with the smallest budget
+    d = _titled(d, fin, _tops(d, facet, "budget"), picks=False)
     note = pl.format("fewer than {} proofs", pl.col("need"))
     return (
         _bars_noted(d, "gain", note, zoom=zoom, over=facet)
@@ -669,9 +644,8 @@ def solved_budget(
             " in the proof case studies",
             subtitle="time / e-graph size until as many runs are proved as"
             f" {BASELINE_NAME} proves in total\n({bases}), relative to"
-            f" {BASELINE_NAME}'s; higher is better;\nthe k with the smallest budget"
-            f" per benchmark {MODES} marked opaque;\n"
-            f"// marks bar cut off; the line at 0 is {BASELINE_NAME}",
+            f" {BASELINE_NAME}'s; higher is better;\n"
+            + _bar_note("the smallest budget"),
         )
     )
 
@@ -723,16 +697,11 @@ def cost_budget(
         .with_columns(
             gain=pl.when(pl.col("reached") == pl.col("runs")).then(
                 (1 - pl.col("ratio")) * 100
-            ),
-            side=SIDE_OF,
+            )
         )
     )
-    # backoff is always top; per resource, of each mode the one with the largest
-    # saving, ties going to the smallest k
-    tops = d.sort(-pl.col("gain"), K_OF, nulls_last=True).select(
-        *facet, "scheduler", "side", top=_top(*facet)
-    )
-    d = _titled(d.drop("side"), fin, tops, picks=False)
+    # per resource, of each mode the one with the largest saving
+    d = _titled(d, fin, _tops(d, facet, -pl.col("gain")), picks=False)
     note = pl.format("reached in {} of {} runs", pl.col("reached"), pl.col("runs"))
     return (
         _bars_noted(d, "gain", note, zoom=zoom, over=facet)
@@ -742,9 +711,8 @@ def cost_budget(
             title=f"Budget to reach {BASELINE_NAME}'s final cost",
             subtitle="time / e-graph size until a run first reaches"
             f" {BASELINE_NAME}'s final cost,\nrelative to {BASELINE_NAME}'s;"
-            " 1 − geomean over runs; higher is better;\nthe k with the largest"
-            f" saving per benchmark {MODES} marked opaque;\n"
-            f"// marks bar cut off; the line at 0 is {BASELINE_NAME}",
+            " 1 − geomean over runs; higher is better;\n"
+            + _bar_note("the largest saving"),
         )
     )
 
@@ -799,7 +767,7 @@ def quality(
     by = ["case", "resource"]
     curves = _titled(_geomean_curves(d, by, _grid(d, by, log_x)), fin)
     return (
-        _steps(curves, "rel", by, log_x)
+        _steps(curves, "rel", log_x)
         + _facets("resource", len(RESOURCES), "free")
         + (p9.scale_y_log10() if log_y else p9.scale_y_continuous())
         + p9.labs(
@@ -811,8 +779,7 @@ def quality(
                 if absolute
                 else "cost relative to the best final cost of each run"
             )
-            + f", geometric mean over runs;\n{TOP_NOTE};"
-            "\n★ marks where a curve stops improving; lower is better",
+            + f", geometric mean over runs;\n{TOP_NOTE};\nlower is better",
         )
     )
 
@@ -841,8 +808,7 @@ def dev(
     grid = _grid(d, by, log_x).with_columns(pl.col("x").round()).unique()
     curves = _titled(_geomean_curves(d, by, grid), fin)
     return (
-        # time and size only grow, so only the cost gets stars
-        _steps(curves, "rel", by, log_x, star_if=pl.col("metric") == METRICS["cost"])
+        _steps(curves, "rel", log_x)
         + _facets("metric", len(METRICS), "free")
         + (p9.scale_y_log10() if log_y else p9.scale_y_continuous())
         + p9.labs(
@@ -853,7 +819,6 @@ def dev(
             title="Development per iteration",
             subtitle="cost, time and e-graph size"
             + ("" if absolute else " relative to the smallest final value of each run")
-            + f", geometric mean over runs;\n{TOP_NOTE};"
-            "\n★ marks where the cost stops improving; lower is better",
+            + f", geometric mean over runs;\n{TOP_NOTE};\nlower is better",
         )
     )
