@@ -21,8 +21,8 @@ BENCHMODE_CPUS = Path("/run/benchmode/bench-cpus")
 # every scheduler in schedulers/, without the .rs suffix
 SCHEDULERS = tuple(sorted(p.stem for p in (ROOT / "schedulers").glob("*.rs")))
 # slowest first, so the long jobs don't end up as the tail of the run
-# CASE_STUDIES = ("caviar", "lean-egg", "szalinski", "integ", "trig")
-CASE_STUDIES = ("lean-egg", "szalinski", "integ", "trig")
+CASE_STUDIES = ("szalinski", "integ", "trig", "lean-egg", "caviar")
+# CASE_STUDIES = ("lean-egg", "szalinski", "integ", "trig")
 
 
 def physical_cpus() -> list[int]:

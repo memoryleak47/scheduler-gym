@@ -123,6 +123,8 @@ def _parse(path: Path) -> pl.DataFrame:
         cost=pl.col("costs").str.split(", ").cast(pl.List(pl.Float64)).list.sum(),
         size=pl.col("size").cast(pl.Float64),
         time=pl.col("time").cast(pl.Float64),
+        # lean-egg's goal hook stops the run on a proof, its cost stays above 1
+        proved=pl.col("stop").str.contains("Proved goal", literal=True),
     )
 
 
@@ -422,7 +424,8 @@ def solved(
     `zoom`: bars are cut off at ±`zoom` percent, their labels still give the value."""
     _, fin = select(df, schedulers=schedulers)
     d = fin.group_by("case", "scheduler").agg(
-        solved=(pl.col("cost") <= solved_cost).sum(), runs=pl.len()
+        solved=((pl.col("cost") <= solved_cost) | pl.col("proved")).sum(),
+        runs=pl.len(),
     )
     base = d.filter(pl.col("scheduler") == BASELINE).select(
         "case", base="solved", base_runs="runs"
@@ -448,7 +451,7 @@ def solved(
         + p9.facet_wrap("title", nrow=1, scales="free")
         + p9.labs(
             x=f"more solved runs than {BASELINE} [%]",
-            title="Proved goals",
+            title="Proved goals in the proof case studies",
             subtitle=f"runs that proved the goal, relative to {BASELINE}'s;\n"
             f"{BASELINE} solved {bases}; higher is better;\n"
             f"the k with the most proofs per benchmark {MODES} marked opaque;\n"
@@ -483,9 +486,9 @@ def solved_profile(
     `log_x`: log x axis; `y_min`, `y_max`: ends of the y axis, to zoom in on a range."""
     df, fin = select(df, schedulers=schedulers)
     group = ["case", "resource", "scheduler"]
-    d = _per_resource(df, "cost")
+    d = _per_resource(df, "cost", "proved")
     runs = fin.group_by("case", "scheduler").agg(runs=pl.len())
-    proved = pl.col("cost") <= solved_cost
+    proved = (pl.col("cost") <= solved_cost) | pl.col("proved")
     proofs = (
         d.filter(proved)
         .group_by(*KEY, "resource", maintain_order=True)
@@ -533,7 +536,8 @@ def solved_profile(
         + p9.labs(
             x="",
             y="runs with a proof",
-            title="Fraction of problems proven within a time / e-graph size budget",
+            title="Fraction of problems proven within a time / e-graph size budget"
+            " in the proof case studies",
             subtitle=f"{BASELINE_NAME} and the k with the most proofs for each mode"
             " (lhs/rhs/class,\nties go to the smaller budget at the last proof)"
             " marked opaque;\n"
