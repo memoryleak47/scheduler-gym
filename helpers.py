@@ -62,9 +62,11 @@ METRICS: dict[Metric, str] = {"cost": "cost", **RESOURCES}
 RESOURCE = pl.Enum(RESOURCES.values())
 METRIC = pl.Enum(METRICS.values())
 
-ENTRY_RE = re.compile(
-    r"costs=\[([^\]]*)\], total_size=(\S+), time=(\S+), iteration=(\d+), stop=(.*)$"
+ENTRY_PATTERN = (
+    r"costs=\[(?P<costs>[^\]]*)\], total_size=(?P<size>\S+), time=(?P<time>\S+), "
+    r"iteration=(?P<iteration>\d+), stop=(?P<stop>.*)$"
 )
+CACHE = BENCHDATA / ".cache"
 
 
 def setup_style():
@@ -100,26 +102,58 @@ def save(plot: p9.ggplot, name: str, size: tuple[float, float]) -> p9.ggplot:
     return plot
 
 
-def load(*, root: Path = BENCHDATA) -> pl.DataFrame:
+def _parse(path: Path) -> pl.DataFrame:
+    """Entries of one file; `run` numbers its runs, unfinished trailing ones dropped."""
+    lines = pl.read_csv(
+        path,
+        has_header=False,
+        separator="\x1f",
+        quote_char=None,
+        schema={"line": pl.String},
+    )
+    df = lines.select(pl.col("line").str.extract_groups(ENTRY_PATTERN)).unnest("line")
+    if bad := df.null_count().sum_horizontal().item():
+        raise ValueError(f"{path}: {bad} fields of malformed entry lines")
+    finished = (pl.col("stop").str.strip_chars() != "None").cast(pl.Int64)
+    return df.filter(finished.cum_sum(reverse=True) > 0).select(
+        pl.lit(path.stem).alias("case"),
+        pl.lit(path.parent.name.removesuffix(".rs")).alias("scheduler"),
+        run=finished.cum_sum().shift(1, fill_value=0),
+        iteration=pl.col("iteration").cast(pl.Int64),
+        cost=pl.col("costs").str.split(", ").cast(pl.List(pl.Float64)).list.sum(),
+        size=pl.col("size").cast(pl.Float64),
+        time=pl.col("time").cast(pl.Float64),
+    )
+
+
+def _cached(path: Path, cache: Path, cases: pl.Enum) -> pl.DataFrame:
+    """`_parse(path)`, cached as parquet keyed on the file's mtime and size."""
+    st = path.stat()
+    folder = cache / path.parent.name
+    file = folder / f"{path.stem}.{st.st_mtime_ns}-{st.st_size}.parquet"
+    if file.exists():
+        df = pl.read_parquet(file)
+    else:
+        df = _parse(path)
+        folder.mkdir(parents=True, exist_ok=True)
+        for stale in folder.glob(f"{path.stem}.*.parquet"):
+            if re.fullmatch(rf"{re.escape(path.stem)}\.\d+-\d+\.parquet", stale.name):
+                stale.unlink()
+        tmp = file.with_suffix(".tmp")
+        df.write_parquet(tmp)
+        tmp.rename(file)
+    # per file, so the full-size string columns never exist
+    return df.with_columns(
+        pl.col("case").cast(cases), pl.col("scheduler").cast(pl.Enum(SCHEDULERS))
+    )
+
+
+def load(*, root: Path = BENCHDATA, cache: Path = CACHE) -> pl.DataFrame:
     """One row per entry; `run` numbers the runs in a file, unfinished ones dropped."""
-    rows = []
-    for path in sorted(root.glob("*/*.entries")):
-        case, scheduler = path.stem, path.parent.name.removesuffix(".rs")
-        run, pending = 0, []
-        for line in path.read_text().splitlines():
-            m = ENTRY_RE.search(line)
-            assert m
-            costs, size, time, iteration, stop = m.groups()
-            cost = sum(float(c) for c in costs.split(", "))
-            pending.append(
-                (case, scheduler, run, int(iteration), cost, float(size), float(time))
-            )
-            if stop.strip() != "None":
-                rows += pending
-                run, pending = run + 1, []
-    schema = [*KEY, "iteration", "cost", "size", "time"]
-    df = pl.DataFrame(rows, schema=schema, orient="row")
-    return df.with_columns(pl.col("scheduler").cast(pl.Enum(SCHEDULERS)))
+    paths = sorted(root.glob("*/*.entries"))
+    # an enum, not a categorical, so cases sort (and facet) alphabetically as strings
+    cases = pl.Enum(sorted({p.stem for p in paths}))
+    return pl.concat([_cached(p, cache, cases) for p in paths], rechunk=True)
 
 
 def select(
