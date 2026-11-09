@@ -16,7 +16,8 @@ For reproducible timings, switch to bench mode first (disables boost and SMT, lo
 
 ```sh
 sudo ./benchmode.sh on
-./benchmode.sh run uv run bench.py
+./benchmode.sh run uv run bench.py --time-limit 10    --schedulers backoff,random,class-cost,source-cost,outcome-cost
+./benchmode.sh run uv run bench.py --node-limit 10000 --schedulers backoff,random,class-cost,source-cost,outcome-cost
 sudo ./benchmode.sh off
 ```
 

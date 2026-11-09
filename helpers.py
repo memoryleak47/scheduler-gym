@@ -66,7 +66,6 @@ ENTRY_PATTERN = (
     r"costs=\[(?P<costs>[^\]]*)\], total_size=(?P<size>\S+), time=(?P<time>\S+), "
     r"iteration=(?P<iteration>\d+), stop=(?P<stop>.*)$"
 )
-CACHE = BENCHDATA / ".cache"
 
 
 def setup_style(dpi: int = 100):
@@ -150,8 +149,13 @@ def _cached(path: Path, cache: Path, cases: pl.Enum) -> pl.DataFrame:
     )
 
 
-def load(*, root: Path = BENCHDATA, cache: Path = CACHE) -> pl.DataFrame:
-    """One row per entry; `run` numbers the runs in a file, unfinished ones dropped."""
+def load(limit: str, *, root: Path = BENCHDATA) -> pl.DataFrame:
+    """One row per entry of the runs with `limit` (a folder of `root` that bench.py
+    wrote, e.g. "time-10" or "nodes-10000"); `run` numbers the runs in a file,
+    unfinished ones dropped."""
+    root /= limit
+    # per limit, the files of different limits have the same names
+    cache = root / ".cache"
     paths = sorted(root.glob("*/*.entries"))
     # an enum, not a categorical, so cases sort (and facet) alphabetically as strings
     cases = pl.Enum(sorted({p.stem for p in paths}))

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
+import argparse
 import asyncio
 import csv
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -81,15 +83,71 @@ def find_tctl() -> Path | None:
     return None
 
 
-async def monitor(cpus: list[int], running: dict[int, str]):
+def parse_args() -> tuple[Path, dict[str, str], list[str]]:
+    """The output folder for the given limit, the env vars that pass it on to
+    gym-common.rs, and the schedulers to run."""
+    parser = argparse.ArgumentParser(
+        description="Run every scheduler on every case study."
+    )
+    limit = parser.add_mutually_exclusive_group(required=True)
+    limit.add_argument(
+        "--time-limit",
+        type=float,
+        metavar="SECONDS",
+        help="stop each run after SECONDS, with no node limit",
+    )
+    limit.add_argument(
+        "--node-limit",
+        type=int,
+        metavar="NODES",
+        help="stop each run at an e-graph size of NODES, with no time limit",
+    )
+    parser.add_argument(
+        "--schedulers",
+        metavar="PREFIXES",
+        help="comma-separated prefixes, only run the schedulers named <prefix>-<k>"
+        " or exactly <prefix>, e.g. backoff,random,class-cost",
+    )
+    args = parser.parse_args()
+    schedulers = list(SCHEDULERS)
+    if args.schedulers is not None:
+        prefixes = [p for p in args.schedulers.split(",") if p]
+        if not prefixes:
+            parser.error("--schedulers needs at least one prefix")
+        pattern = re.compile(rf"(?:{'|'.join(map(re.escape, prefixes))})(?:-\d+)?")
+        schedulers = [s for s in SCHEDULERS if pattern.fullmatch(s)]
+        if unmatched := [
+            p
+            for p in prefixes
+            if not any(re.fullmatch(rf"{re.escape(p)}(?:-\d+)?", s) for s in schedulers)
+        ]:
+            parser.error(f"no scheduler matches {', '.join(unmatched)}")
+    if args.time_limit is not None:
+        if args.time_limit <= 0:
+            parser.error("--time-limit must be positive")
+        return (
+            BENCHDATA / f"time-{args.time_limit:g}",
+            {"GYM_TIME_LIMIT": str(args.time_limit)},
+            schedulers,
+        )
+    if args.node_limit <= 0:
+        parser.error("--node-limit must be positive")
+    return (
+        BENCHDATA / f"nodes-{args.node_limit}",
+        {"GYM_NODE_LIMIT": str(args.node_limit)},
+        schedulers,
+    )
+
+
+async def monitor(out: Path, cpus: list[int], running: dict[int, str]):
     """Logs CPU temperature and per-core job and frequency, to check for throttling."""
     tctl = find_tctl()
-    path = BENCHDATA / f"thermals-{time.strftime('%Y%m%d-%H%M%S')}.csv"
+    path = out / f"thermals-{time.strftime('%Y%m%d-%H%M%S')}.csv"
     # min_mhz only gets entries for cores that actually ran something
     max_temp, min_mhz = float("-inf"), {}
     with path.open("w", newline="") as f:
-        out = csv.writer(f)
-        out.writerow(
+        rows = csv.writer(f)
+        rows.writerow(
             ["time", "tctl"] + [f"cpu{c}_{x}" for c in cpus for x in ("job", "mhz")]
         )
         try:
@@ -103,7 +161,7 @@ async def monitor(cpus: list[int], running: dict[int, str]):
                     if running[cpu]:
                         min_mhz[cpu] = min(min_mhz.get(cpu, mhz), mhz)
                     row += [running[cpu], f"{mhz:.0f}"]
-                out.writerow(row)
+                rows.writerow(row)
                 f.flush()
                 await asyncio.sleep(1)
         finally:
@@ -114,8 +172,16 @@ async def monitor(cpus: list[int], running: dict[int, str]):
             )
 
 
-async def run_job(case: str, scheduler: str, cwd: Path, cpu: int, tmp: Path) -> bool:
-    out_dir = BENCHDATA / f"{scheduler}.rs"
+async def run_job(
+    case: str,
+    scheduler: str,
+    cwd: Path,
+    cpu: int,
+    tmp: Path,
+    out: Path,
+    limit_env: dict[str, str],
+) -> bool:
+    out_dir = out / f"{scheduler}.rs"
     out_dir.mkdir(parents=True, exist_ok=True)
     sched = tmp / f"{case}.{scheduler}.rs"
     entries = tmp / f"{case}.{scheduler}.entries.txt"
@@ -129,7 +195,7 @@ async def run_job(case: str, scheduler: str, cwd: Path, cpu: int, tmp: Path) -> 
         proc = await asyncio.create_subprocess_exec(
             "taskset", "-c", str(cpu), "bash", "./run.sh", str(sched),
             cwd=cwd,
-            env={**os.environ, "GYM_ENTRIES": str(entries)},
+            env={**os.environ, **limit_env, "GYM_ENTRIES": str(entries)},
             stdout=f,
             stderr=asyncio.subprocess.STDOUT,
         )  # fmt: skip
@@ -149,26 +215,30 @@ async def worker(
     bars: dict[str, tqdm],
     running: dict[int, str],
     tmp: Path,
+    out: Path,
+    limit_env: dict[str, str],
 ):
     while jobs:
         case, scheduler = jobs.popleft()
         running[cpu] = f"{case}/{scheduler}"
         copy = await pools[case].acquire(cpu)
         try:
-            ok = await run_job(case, scheduler, copy, cpu, tmp)
+            ok = await run_job(case, scheduler, copy, cpu, tmp, out, limit_env)
         finally:
             pools[case].release(copy)
             running[cpu] = ""
         if not ok:
-            log = BENCHDATA / f"{scheduler}.rs" / f"{case}.log"
+            log = out / f"{scheduler}.rs" / f"{case}.log"
             tqdm.write(
                 f"[{case}] scheduler '{scheduler}' FAILED (no entries), see {log}"
             )
         bars[case].update()
 
 
-async def main():
-    BENCHDATA.mkdir(exist_ok=True)
+async def main(out: Path, limit_env: dict[str, str], schedulers: list[str]):
+    out.mkdir(parents=True, exist_ok=True)
+    print(f"results in {out}")
+    print(f"{len(schedulers)} schedulers: {', '.join(schedulers)}")
     if not BENCHMODE_CPUS.exists():
         print("WARNING: bench mode is off, results may suffer from boost/throttling")
     cpus = physical_cpus()
@@ -177,8 +247,8 @@ async def main():
     jobs = deque(
         (case, scheduler)
         for case in CASE_STUDIES
-        for scheduler in SCHEDULERS
-        if not (BENCHDATA / f"{scheduler}.rs" / f"{case}.entries").exists()
+        for scheduler in schedulers
+        if not (out / f"{scheduler}.rs" / f"{case}.entries").exists()
     )
     width = max(map(len, CASE_STUDIES))
     bars = {
@@ -192,11 +262,13 @@ async def main():
     pools = {case: CopyPool(case) for case in CASE_STUDIES}
 
     running = dict.fromkeys(cpus, "")
-    mon = asyncio.create_task(monitor(cpus, running))
+    mon = asyncio.create_task(monitor(out, cpus, running))
     with tempfile.TemporaryDirectory() as tmp:
         async with asyncio.TaskGroup() as tg:
             for cpu in cpus:
-                tg.create_task(worker(cpu, jobs, pools, bars, running, Path(tmp)))
+                tg.create_task(
+                    worker(cpu, jobs, pools, bars, running, Path(tmp), out, limit_env)
+                )
     for bar in bars.values():
         bar.close()
     mon.cancel()
@@ -210,4 +282,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main(*parse_args()))
