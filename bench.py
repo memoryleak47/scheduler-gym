@@ -218,7 +218,22 @@ async def run_job(
     if not entries.exists():
         return False
     shutil.move(entries, out_dir / f"{case}.entries")
+    if ends_mid_run(out_dir / f"{case}.entries"):
+        # the exit code can't tell, some run.sh exit non-zero on success
+        tqdm.write(
+            f"[{case}] scheduler '{scheduler}' stopped mid-run (crashed or killed?), "
+            f"its last run will be dropped, see {out_dir / f'{case}.log'}"
+        )
     return True
+
+
+def ends_mid_run(entries: Path) -> bool:
+    """Whether the last entry of `entries` has no stop reason, so the process ended
+    during a run; reads only the end, the files can be large."""
+    with entries.open("rb") as f:
+        f.seek(max(0, f.seek(0, os.SEEK_END) - 4096))
+        lines = f.read().decode(errors="replace").splitlines()
+    return bool(lines) and lines[-1].rstrip().endswith("stop=None")
 
 
 async def worker(

@@ -124,6 +124,9 @@ def _parse(path: Path) -> pl.DataFrame:
         time=pl.col("time").cast(pl.Float64),
         # lean-egg's goal hook stops the run on a proof, its cost stays above 1
         proved=pl.col("stop").str.contains("Proved goal", literal=True),
+        # trig's unsound rules can merge different constants, its run then ends with
+        # this stop and a copy of the last entry before the panic
+        panicked=pl.col("stop").str.contains('Other("Panicked")', literal=True),
     )
 
 
@@ -152,14 +155,34 @@ def _cached(path: Path, cache: Path, cases: pl.Enum) -> pl.DataFrame:
 def load(limit: str, *, root: Path = BENCHDATA) -> pl.DataFrame:
     """One row per entry of the runs with `limit` (a folder of `root` that bench.py
     wrote, e.g. "time-10" or "nodes-10000"); `run` numbers the runs in a file,
-    unfinished ones dropped."""
+    unfinished ones dropped. Runs that panicked are left out, and listed."""
     root /= limit
     # per limit, the files of different limits have the same names
     cache = root / ".cache"
     paths = sorted(root.glob("*/*.entries"))
     # an enum, not a categorical, so cases sort (and facet) alphabetically as strings
     cases = pl.Enum(sorted({p.stem for p in paths}))
-    return pl.concat([_cached(p, cache, cases) for p in paths], rechunk=True)
+    df = pl.concat([_cached(p, cache, cases) for p in paths], rechunk=True)
+    return _drop_panicked(df)
+
+
+def _drop_panicked(df: pl.DataFrame) -> pl.DataFrame:
+    """`df` without the runs that panicked, printing how many per case and scheduler:
+    their e-graph merged different constants, so their costs can't be trusted."""
+    runs = df.group_by(KEY).agg(pl.col("panicked").any())
+    counts = (
+        runs.group_by("case", "scheduler")
+        .agg(pl.col("panicked").sum(), runs=pl.len())
+        .filter(pl.col("panicked") > 0)
+        .sort("case", "scheduler")
+    )
+    for case, scheduler, panicked, total in counts.iter_rows():
+        print(
+            f"{case}: leaving out {panicked}/{total} runs of {scheduler} that panicked"
+        )
+    return df.join(runs.filter("panicked").select(KEY), on=KEY, how="anti").drop(
+        "panicked"
+    )
 
 
 def select(
@@ -194,9 +217,12 @@ def select(
 
 
 def check_runs(df: pl.DataFrame, *, schedulers: Sequence[str] = SCHEDULERS):
-    """Print cases where `schedulers` have different numbers of finished runs."""
+    """Print cases where `schedulers` have different numbers of finished runs, runs
+    that panicked counting as finished."""
     _, fin = select(df, schedulers=schedulers)
-    counts = fin.group_by("case", "scheduler").len()
+    # `run` is the goal's index in every scheduler's file, so runs left out in the
+    # middle (see `_drop_panicked`) don't count, only missing ones at the end
+    counts = fin.group_by("case", "scheduler").agg(len=pl.col("run").max() + 1)
     for (case,), g in counts.group_by("case"):
         if g["len"].n_unique() > 1:
             print(f"{case}: schedulers disagree on number of runs:")
