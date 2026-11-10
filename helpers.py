@@ -16,13 +16,13 @@ FIGURES = ROOT / "figures"
 
 KEY = ("case", "scheduler", "run")
 Resource = Literal["time", "size"]
-Side = Literal["backoff", "source", "outcome", "class", "random"]
+Side = Literal["backoff", "source", "outcome", "random", "other"]
 COLORS: dict[Side, str] = {
     "backoff": "black",
     "source": "#E69F00",  # orange
     "outcome": "#0072B2",  # blue
-    "class": "#009E73",  # bluish green
     "random": "#CC79A7",  # reddish purple
+    "other": "#009E73",  # bluish green
 }  # Okabe-Ito colorblind-safe palette
 SIDE = pl.Enum(COLORS.keys())
 _NAME = pl.col("scheduler").cast(pl.String)
@@ -31,11 +31,11 @@ SIDE_OF = (
     .then(pl.lit("backoff"))
     .when(_NAME.str.contains(r"^random-\d+$"))
     .then(pl.lit("random"))
-    .otherwise(_NAME.str.extract(r"^(source|outcome|class)-cost-\d+$"))
+    .otherwise(_NAME.str.extract(r"^(source|outcome)-cost-\d+$"))
     .cast(SIDE)
 )
 K_OF = _NAME.str.extract(r"-(\d+)$").cast(pl.Int64)
-COST_SIDE = pl.col("side").is_in(["source", "outcome", "class", "random"])
+COST_SIDE = pl.col("side").is_in(["source", "outcome", "random"])
 # the scheduler the bar charts are relative to
 BASELINE = "backoff"
 # alpha of the curves and bars that are not the best of their side
@@ -47,7 +47,7 @@ BREAK = MplPath(
 )
 # how the baseline is called in the plot texts
 BASELINE_NAME = "BackoffScheduler"
-MODES = "for each mode (source/outcome/class/random)"
+MODES = "for each mode (source/outcome/random)"
 
 
 def _bar_note(best: str) -> str:
@@ -384,7 +384,7 @@ def _bars(
         )
         + p9.scale_y_discrete(
             limits=top_down,
-            # class-cost-400 -> class 400, random-400 -> random 400
+            # source-cost-400 -> source 400, random-400 -> random 400
             labels=[re.sub(r"(-cost)?-(\d+)$", r" \2", s) for s in top_down],
         )
         + p9.scale_color_manual(values=COLORS)
@@ -603,7 +603,7 @@ def solved_profile(
             title="Fraction of problems proven within a time / e-graph size budget"
             " in the proof case studies",
             subtitle=f"{BASELINE_NAME} and the k with the most proofs for each mode"
-            " (source/outcome/class/random,\nties go to the smaller budget at the last proof)"
+            " (source/outcome/random,\nties go to the smaller budget at the last proof)"
             " marked opaque;\nhigher is better",
         )
     )

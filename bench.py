@@ -111,7 +111,7 @@ def parse_args() -> tuple[Path, dict[str, str], list[str]]:
         "--schedulers",
         metavar="PREFIXES",
         help="comma-separated prefixes, only run the schedulers named <prefix>-<k>"
-        " or exactly <prefix>, e.g. backoff,random,class-cost",
+        " or exactly <prefix>, e.g. backoff,random,source-cost",
     )
     args = parser.parse_args()
     schedulers = list(SCHEDULERS)
