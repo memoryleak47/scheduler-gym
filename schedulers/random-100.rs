@@ -1,7 +1,7 @@
 // Ablation of source-cost-*: same match collection and application budget,
 // but matches are applied in a (seeded) random order instead of by inclusion cost.
 
-const RANDOM_SEED: u64 = 0x5EED_1234_ABCD_0042;
+const RANDOM_SEED: u64 = 0x0012_3456_78AB_CDEF;
 
 struct RandomSched {
     backoff: BackoffScheduler,
@@ -9,14 +9,23 @@ struct RandomSched {
 }
 
 fn sched_init() -> RandomSched {
-    RandomSched { backoff: BackoffScheduler::default(), rng: SplitMix64(RANDOM_SEED) }
+    RandomSched {
+        backoff: BackoffScheduler::default(),
+        rng: SplitMix64(RANDOM_SEED),
+    }
 }
 
-fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ctxt: &mut Ctxt<'a, L, N, IterData>, sched: &mut RandomSched) -> Result<(), StopReason> {
+fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(
+    ctxt: &mut Ctxt<'a, L, N, IterData>,
+    sched: &mut RandomSched,
+) -> Result<(), StopReason> {
     let mut matches: Vec<(usize, Id, Subst)> = Vec::new();
 
     for (rw_i, rw) in ctxt.rws.iter().enumerate() {
-        for m in sched.backoff.search_rewrite(ctxt.runner.iterations.len(), &ctxt.runner.egraph, rw) {
+        for m in sched
+            .backoff
+            .search_rewrite(ctxt.runner.iterations.len(), &ctxt.runner.egraph, rw)
+        {
             ctxt.check_limits()?;
 
             let lhs = m.eclass;
@@ -39,12 +48,15 @@ fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
         let pat_ast = rw.searcher.get_pattern_ast();
 
         let prev_data = eg_data(&ctxt.runner.egraph);
-        rw.applier.apply_one(&mut ctxt.runner.egraph, *lhs, subst, pat_ast, rw.name);
+        rw.applier
+            .apply_one(&mut ctxt.runner.egraph, *lhs, subst, pat_ast, rw.name);
         let post_data = eg_data(&ctxt.runner.egraph);
 
         if prev_data != post_data {
             counter += 1;
-            if counter >= 100 { break }
+            if counter >= 100 {
+                break;
+            }
         }
 
         ctxt.check_limits()?;

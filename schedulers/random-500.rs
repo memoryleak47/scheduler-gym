@@ -1,7 +1,7 @@
 // Ablation of source-cost-*: same match collection and application budget,
 // but matches are applied in a (seeded) random order instead of by inclusion cost.
 
-const RANDOM_SEED: u64 = 0x5EED_1234_ABCD_0042;
+const RANDOM_SEED: u64 = 0x0012_3456_78AB_CDEF;
 
 struct RandomSched {
     backoff: BackoffScheduler,
