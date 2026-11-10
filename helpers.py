@@ -45,6 +45,8 @@ BREAK = MplPath(
     [(-0.6, -1), (-0.1, 1), (0.1, -1), (0.6, 1)],
     [MplPath.MOVETO, MplPath.LINETO, MplPath.MOVETO, MplPath.LINETO],
 )
+# space between the modes in the bar charts, in bar rows
+MODE_GAP = 0.5
 # how the baseline is called in the plot texts
 BASELINE_NAME = "BackoffScheduler"
 MODES = "for each mode (source/outcome/random)"
@@ -53,8 +55,9 @@ MODES = "for each mode (source/outcome/random)"
 def _bar_note(best: str) -> str:
     """Last lines of a bar chart's subtitle, the opaque bars being the k with `best`."""
     return (
-        f"the k with {best} per benchmark {MODES} marked opaque;\n"
-        f"// marks bar cut off; the line at 0 is {BASELINE_NAME}"
+        f"the k with {best} per benchmark {MODES}\n"
+        f"marked opaque and in bold; // marks bar cut off;"
+        f" the line at 0 is {BASELINE_NAME}"
     )
 
 
@@ -333,14 +336,54 @@ def _steps(d: pl.DataFrame, y: str, log_x: bool) -> p9.ggplot:
     )
 
 
+class _BarPlot(p9.ggplot):
+    """A ggplot whose y tick labels are bold where a layer marked `bold_ticks` has a
+    row in that panel, so each facet bolds its own top schedulers."""
+
+    def draw(self, *, show: bool = False):
+        figure = super().draw(show=show)
+        for layer in self.layers:
+            if not getattr(layer.geom, "bold_ticks", False):
+                continue
+            data = layer.data
+            for pidx, ax in enumerate(self.axs):
+                panel = pidx + 1
+                bold = set(data.loc[data["PANEL"] == panel, "y"])
+                for loc, tick in zip(
+                    ax.yaxis.get_majorticklocs(), ax.yaxis.get_major_ticks()
+                ):
+                    if loc in bold:
+                        tick.label1.set_fontweight("bold")
+        return figure
+
+
+def _positions(d: pl.DataFrame) -> tuple[pl.DataFrame, list[float], list[str]]:
+    """`d` with the y position `pos` of its scheduler, and the breaks and labels:
+    the first category on top, `MODE_GAP` between the modes. Backoff is left out."""
+    dtype = d["scheduler"].dtype
+    assert isinstance(dtype, pl.Enum)
+    names = [s for s in dtype.categories.reverse() if s != BASELINE]
+    sides = pl.DataFrame({"scheduler": names}).select(side=SIDE_OF)["side"]
+    pos, breaks = 0.0, []
+    for i, side in enumerate(sides):
+        if i and side != sides[i - 1]:
+            pos += MODE_GAP
+        breaks.append(pos)
+        pos += 1
+    where = pl.DataFrame(
+        {"scheduler": names, "pos": breaks}, {"scheduler": dtype, "pos": pl.Float64}
+    )
+    # source-cost-400 -> source 400, random-400 -> random 400
+    labels = [re.sub(r"(-cost)?-(\d+)$", r" \2", s) for s in names]
+    return d.join(where, on="scheduler"), breaks, labels
+
+
 def _bars(
     d: pl.DataFrame, value: str, *, zoom: float = 100, over: Sequence[str] = ("case",)
 ) -> p9.ggplot:
     """Bars of `value` per scheduler, cut at ±`zoom` with a // break.
     Backoff is left out, it is the line at 0. `over`: the columns of a facet."""
-    dtype = d["scheduler"].dtype
-    assert isinstance(dtype, pl.Enum)
-    top_down = [s for s in dtype.categories.reverse() if s != BASELINE]
+    d, breaks, labels = _positions(d)
     gain = pl.col(value) >= 0
     # room for the labels past the bars, about a third of the case's range of bars
     span = pl.max_horizontal(pl.col("end").max(), 0) - pl.min_horizontal(
@@ -360,14 +403,16 @@ def _bars(
     d = d.with_columns(
         text=pl.Series(f" {v:+.1f}%" if v >= 0 else f"{v:+.1f}% " for v in d[value])
     )
-    bar = p9.aes(yend="scheduler")
+    bar = p9.aes(yend="pos")
     label = p9.aes(x="end", label="text")
+    top = p9.geom_segment(bar, data=d.filter(pl.col("top")), size=4)
+    top.bold_ticks = True
     return (
-        p9.ggplot(d, p9.aes(y="scheduler", x=0, xend="end", color="side"))
+        _BarPlot(d, p9.aes(y="pos", x=0, xend="end", color="side"))
         + p9.geom_vline(xintercept=0, color=COLORS["backoff"], size=0.5)
         + p9.geom_blank(p9.aes(x="reach"))
         + p9.geom_segment(bar, data=d.filter(~pl.col("top")), size=4, alpha=REST_ALPHA)
-        + p9.geom_segment(bar, data=d.filter(pl.col("top")), size=4)
+        + top
         + p9.geom_point(
             p9.aes(x="gap"),
             data=d.filter(pl.col(value).abs() > zoom),
@@ -382,16 +427,19 @@ def _bars(
             labels=lambda xs: [f"{x:+.3g}%" if x else "0%" for x in xs],
             expand=(0.02, 0),
         )
-        + p9.scale_y_discrete(
-            limits=top_down,
-            # source-cost-400 -> source 400, random-400 -> random 400
-            labels=[re.sub(r"(-cost)?-(\d+)$", r" \2", s) for s in top_down],
+        + p9.scale_y_continuous(
+            breaks=breaks,
+            labels=labels,
+            limits=(breaks[0], breaks[-1]),
+            # as a discrete scale would, half a row past the outer bars
+            expand=(0, 0.6),
         )
         + p9.scale_color_manual(values=COLORS)
         + p9.guides(color="none")
         + p9.labs(y="")
         + p9.theme(
             panel_grid_major_y=p9.element_blank(),
+            panel_grid_minor_y=p9.element_blank(),
             # left aligned, so the modes line up and the k are easier to compare
             axis_text_y=p9.element_text(ha="left"),
         )
@@ -411,15 +459,16 @@ def _bars_noted(
     gain = pl.col(value).clip(-zoom, zoom)
     left = (-gain.min().over(over) > gain.max().over(over)).fill_null(False)
     short = (
-        d.with_columns(left=left)
-        .filter(pl.col(value).is_null() & (pl.col("scheduler") != BASELINE))
+        _positions(d)[0]
+        .with_columns(left=left)
+        .filter(pl.col(value).is_null())
         .with_columns(
             text=pl.when("left")
             .then(pl.format("{} ", note))
             .otherwise(pl.format(" {}", note))
         )
     )
-    aes = p9.aes(x=0, y="scheduler", label="text")
+    aes = p9.aes(x=0, y="pos", label="text")
     return (
         _bars(d.filter(pl.col(value).is_not_null()), value, zoom=zoom, over=over)
         + p9.geom_text(
