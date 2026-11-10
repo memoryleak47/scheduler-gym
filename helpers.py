@@ -36,6 +36,8 @@ SIDE_OF = (
 )
 K_OF = _NAME.str.extract(r"-(\d+)$").cast(pl.Int64)
 COST_SIDE = pl.col("side").is_in(["source", "outcome", "random"])
+# whether the goal is proved, or the cost reached 1
+PROVED = (pl.col("cost") <= 1) | pl.col("proved")
 # the scheduler the bar charts are relative to
 BASELINE = "backoff"
 # alpha of the curves and bars that are not the best of their side
@@ -45,6 +47,8 @@ BREAK = MplPath(
     [(-0.6, -1), (-0.1, 1), (0.1, -1), (0.6, 1)],
     [MplPath.MOVETO, MplPath.LINETO, MplPath.MOVETO, MplPath.LINETO],
 )
+# bars are cut off at ±ZOOM percent with a // break, their labels still give the value
+ZOOM = 100
 # space between the modes in the bar charts, in bar rows
 MODE_GAP = 0.5
 # how the baseline is called in the plot texts
@@ -64,6 +68,8 @@ def _bar_note(best: str) -> str:
 RESOURCES: dict[Resource, str] = {"time": "time [s]", "size": "e-graph size"}
 # the labels as ordered categories, so facets come in this order
 RESOURCE = pl.Enum(RESOURCES.values())
+# one row per resource, to cross join with
+RESOURCE_ROWS = pl.DataFrame({"resource": RESOURCES.values()}, {"resource": RESOURCE})
 
 ENTRY_PATTERN = (
     r"costs=\[(?P<costs>[^\]]*)\], total_size=(?P<size>\S+), time=(?P<time>\S+), "
@@ -189,7 +195,7 @@ def _drop_panicked(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def select(
-    df: pl.DataFrame, *, schedulers: Sequence[str] = SCHEDULERS
+    df: pl.DataFrame, *, schedulers: Sequence[str]
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Rows of `schedulers` in that order, and finals: one row per run with the final
     cost, the run's best final cost, resources to reach it, `side` and `top`."""
@@ -219,7 +225,7 @@ def select(
     return df, fin.join(top, on=["case", "scheduler"], how="left")
 
 
-def check_runs(df: pl.DataFrame, *, schedulers: Sequence[str] = SCHEDULERS):
+def check_runs(df: pl.DataFrame, *, schedulers: Sequence[str]):
     """Print cases where `schedulers` have different numbers of finished runs, runs
     that panicked counting as finished."""
     _, fin = select(df, schedulers=schedulers)
@@ -315,8 +321,8 @@ def _facets(scales: Literal["free", "free_x"]) -> p9.facet_wrap:
     )
 
 
-def _steps(d: pl.DataFrame, y: str, log_x: bool) -> p9.ggplot:
-    """Step lines per scheduler, top ones opaque."""
+def _steps(d: pl.DataFrame, y: str, *, log: bool) -> p9.ggplot:
+    """Step lines per scheduler, top ones opaque; `log`: log x axis."""
     top = d.filter(pl.col("top"))
     # legend with only the sides present
     breaks = [side for side in COLORS if side in d["side"]]
@@ -326,7 +332,7 @@ def _steps(d: pl.DataFrame, y: str, log_x: bool) -> p9.ggplot:
         # a white halo, so the top curves stand out where they cross the rest
         + p9.geom_step(data=top, size=2.4, color="white")
         + p9.geom_step(data=top, size=1.4)
-        + (p9.scale_x_log10() if log_x else p9.scale_x_continuous())
+        + (p9.scale_x_log10() if log else p9.scale_x_continuous())
         + p9.scale_color_manual(
             values=COLORS,
             breaks=breaks,
@@ -337,13 +343,13 @@ def _steps(d: pl.DataFrame, y: str, log_x: bool) -> p9.ggplot:
 
 
 class _BarPlot(p9.ggplot):
-    """A ggplot whose y tick labels are bold where a layer marked `bold_ticks` has a
-    row in that panel, so each facet bolds its own top schedulers."""
+    """A ggplot whose y tick labels are bold where a layer whose geom has the param
+    `bold_ticks` has a row in that panel, so each facet bolds its own top schedulers."""
 
     def draw(self, *, show: bool = False):
         figure = super().draw(show=show)
         for layer in self.layers:
-            if not getattr(layer.geom, "bold_ticks", False):
+            if not layer.geom.params.get("bold_ticks"):
                 continue
             data = layer.data
             for pidx, ax in enumerate(self.axs):
@@ -378,10 +384,8 @@ def _positions(d: pl.DataFrame) -> tuple[pl.DataFrame, list[float], list[str]]:
     return d.join(where, on="scheduler"), breaks, labels
 
 
-def _bars(
-    d: pl.DataFrame, value: str, *, zoom: float = 100, over: Sequence[str] = ("case",)
-) -> p9.ggplot:
-    """Bars of `value` per scheduler, cut at ±`zoom` with a // break.
+def _bars(d: pl.DataFrame, value: str, *, over: Sequence[str] = ("case",)) -> p9.ggplot:
+    """Bars of `value` per scheduler, cut at ±`ZOOM` with a // break.
     Backoff is left out, it is the line at 0. `over`: the columns of a facet."""
     d, breaks, labels = _positions(d)
     gain = pl.col(value) >= 0
@@ -391,7 +395,7 @@ def _bars(
     )
     d = (
         d.filter(pl.col("scheduler") != BASELINE)
-        .with_columns(end=pl.col(value).clip(-zoom, zoom))
+        .with_columns(end=pl.col(value).clip(-ZOOM, ZOOM))
         .with_columns(
             reach=pl.col("end")
             + pl.when(gain).then(0.3).otherwise(-0.3) * span.over(over),
@@ -406,7 +410,7 @@ def _bars(
     bar = p9.aes(yend="pos")
     label = p9.aes(x="end", label="text")
     top = p9.geom_segment(bar, data=d.filter(pl.col("top")), size=4)
-    top.bold_ticks = True
+    top.params["bold_ticks"] = True
     return (
         _BarPlot(d, p9.aes(y="pos", x=0, xend="end", color="side"))
         + p9.geom_vline(xintercept=0, color=COLORS["backoff"], size=0.5)
@@ -415,7 +419,7 @@ def _bars(
         + top
         + p9.geom_point(
             p9.aes(x="gap"),
-            data=d.filter(pl.col(value).abs() > zoom),
+            data=d.filter(pl.col(value).abs() > ZOOM),
             shape=BREAK,
             size=5,
             stroke=1.2,
@@ -447,16 +451,11 @@ def _bars(
 
 
 def _bars_noted(
-    d: pl.DataFrame,
-    value: str,
-    note: pl.Expr,
-    *,
-    zoom: float = 100,
-    over: Sequence[str] = ("case",),
+    d: pl.DataFrame, value: str, note: pl.Expr, *, over: Sequence[str]
 ) -> p9.ggplot:
     """`_bars` of the rows with a `value`; the others get `note` in gray at 0,
     on the side of 0 with more room."""
-    gain = pl.col(value).clip(-zoom, zoom)
+    gain = pl.col(value).clip(-ZOOM, ZOOM)
     left = (-gain.min().over(over) > gain.max().over(over)).fill_null(False)
     short = (
         _positions(d)[0]
@@ -470,7 +469,7 @@ def _bars_noted(
     )
     aes = p9.aes(x=0, y="pos", label="text")
     return (
-        _bars(d.filter(pl.col(value).is_not_null()), value, zoom=zoom, over=over)
+        _bars(d.filter(pl.col(value).is_not_null()), value, over=over)
         + p9.geom_text(
             aes,
             data=short.filter(~pl.col("left")),
@@ -490,14 +489,8 @@ def _bars_noted(
     )
 
 
-def ranking(
-    df: pl.DataFrame,
-    schedulers: Sequence[str] = SCHEDULERS,
-    *,
-    zoom: float = 100,
-) -> p9.ggplot:
-    """Final cost reduction over backoff in percent, geomean over runs.
-    `zoom`: bars are cut off at ±`zoom` percent, their labels still give the value."""
+def ranking(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
+    """Final cost reduction over backoff in percent, geomean over runs."""
     _, fin = select(df, schedulers=schedulers)
     base = fin.filter(pl.col("scheduler") == BASELINE).select(
         "case", "run", base=pl.col("cost")
@@ -508,7 +501,7 @@ def ranking(
         .agg(gain=(1 - _geomean(pl.col("cost") / pl.col("base"))) * 100)
     )
     return (
-        _bars(_titled(d, fin, picks=False), "gain", zoom=zoom)
+        _bars(_titled(d, fin, picks=False), "gain")
         + p9.facet_wrap("title", nrow=1, scales="free")
         + p9.labs(
             x=f"final cost reduction over {BASELINE_NAME} [%]",
@@ -519,25 +512,10 @@ def ranking(
     )
 
 
-def _proved(solved_cost: float) -> pl.Expr:
-    """Whether the goal is proved, or the cost reached `solved_cost`."""
-    return (pl.col("cost") <= solved_cost) | pl.col("proved")
-
-
-def solved(
-    df: pl.DataFrame,
-    schedulers: Sequence[str] = SCHEDULERS,
-    *,
-    solved_cost: float = 1,
-    zoom: float = 100,
-) -> p9.ggplot:
-    """Change in runs that reached `solved_cost`, relative to backoff in percent.
-    `zoom`: bars are cut off at ±`zoom` percent, their labels still give the value."""
+def solved(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
+    """Change in runs that proved the goal, relative to backoff in percent."""
     _, fin = select(df, schedulers=schedulers)
-    d = fin.group_by("case", "scheduler").agg(
-        solved=_proved(solved_cost).sum(),
-        runs=pl.len(),
-    )
+    d = fin.group_by("case", "scheduler").agg(solved=PROVED.sum(), runs=pl.len())
     base = d.filter(pl.col("scheduler") == BASELINE).select(
         "case", base="solved", base_runs="runs"
     )
@@ -558,7 +536,7 @@ def solved(
         .otherwise(pl.col("side") == "backoff"),
     )
     return (
-        _bars(_titled(d, fin, tops, picks=False), "gain", zoom=zoom)
+        _bars(_titled(d, fin, tops, picks=False), "gain")
         + p9.facet_wrap("title", nrow=1, scales="free")
         + p9.labs(
             x=f"more solved runs than {BASELINE_NAME} [%]",
@@ -593,29 +571,22 @@ def _first_proofs(d: pl.DataFrame, proved: pl.Expr) -> pl.DataFrame:
 
 
 def solved_profile(
-    df: pl.DataFrame,
-    schedulers: Sequence[str] = SCHEDULERS,
-    *,
-    solved_cost: float = 1,
-    log_x: bool = False,
-    y_min: float = 0,
-    y_max: float = 1,
+    df: pl.DataFrame, schedulers: Sequence[str], *, y_min: float = 0, y_max: float = 1
 ) -> p9.ggplot:
-    """Fraction of runs that reached `solved_cost` within a resource budget.
-    `log_x`: log x axis; `y_min`, `y_max`: ends of the y axis, to zoom in on a range."""
+    """Fraction of runs that proved the goal within a resource budget.
+    `y_min`, `y_max`: ends of the y axis, to zoom in on a range."""
     df, fin = select(df, schedulers=schedulers)
     group = ["case", "resource", "scheduler"]
     d = _per_resource(df, "cost", "proved")
     runs = fin.group_by("case", "scheduler").agg(runs=pl.len())
-    proved = _proved(solved_cost)
     proofs = (
-        _first_proofs(d, proved)
+        _first_proofs(d, PROVED)
         .join(runs, on=["case", "scheduler"])
         .with_columns(y=pl.col("x").rank("ordinal").over(group) / pl.col("runs"))
     )
     # without any proof, the curves start at the smallest resource used at all
     lo = d.group_by("case", "resource").agg(
-        lo=pl.col("x").filter(proved).min().fill_null(pl.col("x").min())
+        lo=pl.col("x").filter(PROVED).min().fill_null(pl.col("x").min())
     )
     ends = (
         d.group_by(group)
@@ -643,7 +614,7 @@ def solved_profile(
     most = -pl.col("n").cast(pl.Int64)
     curves = _titled(curves, fin, _tops(ends, ["case", "resource"], most, "last"))
     return (
-        _steps(curves, "y", log_x)
+        _steps(curves, "y", log=False)
         + _facets("free_x")
         + p9.coord_cartesian(ylim=(y_min, y_max))
         + p9.labs(
@@ -658,20 +629,13 @@ def solved_profile(
     )
 
 
-def solved_budget(
-    df: pl.DataFrame,
-    schedulers: Sequence[str] = SCHEDULERS,
-    *,
-    solved_cost: float = 1,
-    zoom: float = 100,
-) -> p9.ggplot:
+def solved_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
     """Resource budget a scheduler needs to prove as many runs as backoff does in
     total, as savings over backoff's budget in percent; schedulers that prove fewer
-    get no bar. `zoom`: bars are cut off at ±`zoom` percent, their labels still give
-    the value."""
+    get no bar."""
     df, fin = select(df, schedulers=schedulers)
     facet = ["case", "resource"]
-    proofs = _first_proofs(_per_resource(df, "cost", "proved"), _proved(solved_cost))
+    proofs = _first_proofs(_per_resource(df, "cost", "proved"), PROVED)
     need = (
         proofs.filter(pl.col("scheduler") == BASELINE)
         .group_by(facet)
@@ -696,10 +660,7 @@ def solved_budget(
     every = (
         fin.select("case", "scheduler")
         .unique()
-        .join(
-            pl.DataFrame({"resource": RESOURCES.values()}, {"resource": RESOURCE}),
-            how="cross",
-        )
+        .join(RESOURCE_ROWS, how="cross")
         .join(need, on=facet)
     )
     d = (
@@ -711,7 +672,7 @@ def solved_budget(
     d = _titled(d, fin, _tops(d, facet, "budget"), picks=False)
     note = pl.format("fewer than {} proofs", pl.col("need"))
     return (
-        _bars_noted(d, "gain", note, zoom=zoom, over=facet)
+        _bars_noted(d, "gain", note, over=facet)
         + _facets("free")
         + p9.labs(
             x=f"less budget than {BASELINE_NAME} [%]",
@@ -725,16 +686,10 @@ def solved_budget(
     )
 
 
-def cost_budget(
-    df: pl.DataFrame,
-    schedulers: Sequence[str] = SCHEDULERS,
-    *,
-    zoom: float = 100,
-) -> p9.ggplot:
+def cost_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
     """Resource budget until a run first reaches backoff's final cost of that run, as
     savings over backoff's budget in percent, 1 − geomean over runs; schedulers that
-    miss it in some run get no bar.
-    `zoom`: bars are cut off at ±`zoom` percent, their labels still give the value."""
+    miss it in some run get no bar."""
     df, fin = select(df, schedulers=schedulers)
     facet = ["case", "resource"]
     goal = fin.filter(pl.col("scheduler") == BASELINE).select(
@@ -753,18 +708,12 @@ def cost_budget(
     budgets = (
         reached.join(base, on=["case", "run", "resource"])
         .group_by(*facet, "scheduler")
-        .agg(
-            ratio=_geomean(pl.col("budget") / pl.col("base")),
-            reached=pl.len(),
-        )
+        .agg(ratio=_geomean(pl.col("budget") / pl.col("base")), reached=pl.len())
     )
     every = (
         fin.group_by("case", "scheduler")
         .agg(runs=pl.len())
-        .join(
-            pl.DataFrame({"resource": RESOURCES.values()}, {"resource": RESOURCE}),
-            how="cross",
-        )
+        .join(RESOURCE_ROWS, how="cross")
     )
     d = (
         every.join(budgets, on=[*facet, "scheduler"], how="left")
@@ -779,7 +728,7 @@ def cost_budget(
     d = _titled(d, fin, _tops(d, facet, -pl.col("gain")), picks=False)
     note = pl.format("reached in {} of {} runs", pl.col("reached"), pl.col("runs"))
     return (
-        _bars_noted(d, "gain", note, zoom=zoom, over=facet)
+        _bars_noted(d, "gain", note, over=facet)
         + _facets("free")
         + p9.labs(
             x=f"less budget than {BASELINE_NAME} [%]",
@@ -816,37 +765,25 @@ def _geomean_curves(d: pl.DataFrame, by: list[str], grid: pl.DataFrame) -> pl.Da
 
 
 def quality(
-    df: pl.DataFrame,
-    schedulers: Sequence[str] = SCHEDULERS,
-    *,
-    log_x: bool = False,
-    log_y: bool = False,
-    absolute: bool = False,
+    df: pl.DataFrame, schedulers: Sequence[str], *, log: bool = False
 ) -> p9.ggplot:
     """Cost relative to the run's best final cost over resource, geomean over runs.
-    `log_x`/`log_y`: log axes; `absolute`: plain cost (only the y scale changes)."""
+    `log`: log x and y axes."""
     df, fin = select(df, schedulers=schedulers)
-    rel = pl.col("cost")
-    if not absolute:
-        df = df.join(fin.select(*KEY, "best"), on=KEY)
-        rel /= pl.col("best")
-    d = _per_resource(df.with_columns(rel=rel), "rel")
+    df = df.join(fin.select(*KEY, "best"), on=KEY)
+    d = _per_resource(df.with_columns(rel=pl.col("cost") / pl.col("best")), "rel")
     by = ["case", "resource"]
-    curves = _titled(_geomean_curves(d, by, _grid(d, by, log_x)), fin)
+    curves = _titled(_geomean_curves(d, by, _grid(d, by, log)), fin)
     return (
-        _steps(curves, "rel", log_x)
+        _steps(curves, "rel", log=log)
         + _facets("free")
-        + (p9.scale_y_log10() if log_y else p9.scale_y_continuous())
+        + (p9.scale_y_log10() if log else p9.scale_y_continuous())
         + p9.labs(
             x="",
-            y="cost (geomean)" if absolute else "cost / best final cost (geomean)",
+            y="cost / best final cost (geomean)",
             title="Cost over time and e-graph size",
-            subtitle=(
-                "cost"
-                if absolute
-                else "cost relative to the best final cost of each run"
-            )
-            + ", geometric mean over runs;\n"
+            subtitle="cost relative to the best final cost of each run,"
+            " geometric mean over runs;\n"
             f"{BASELINE_NAME} and the k with the lowest final cost per benchmark"
             f" {MODES} marked opaque;\nlower is better",
         )
