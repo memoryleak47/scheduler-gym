@@ -11,7 +11,7 @@ from matplotlib.path import Path as MplPath
 from bench import SCHEDULERS
 
 ROOT = Path(__file__).resolve().parent
-BENCHDATA = ROOT / "benchdata"
+BENCHDATA = ROOT / "benchdata-old"
 FIGURES = ROOT / "figures"
 
 KEY = ("case", "scheduler", "benchmark")
@@ -57,9 +57,9 @@ MODES = "for each mode (source/outcome/random)"
 
 
 def _bar_note(best: str) -> str:
-    """Last lines of a bar chart's subtitle, the opaque bars being the k with `best`."""
+    """Last lines of a bar chart's subtitle, the opaque bars being all k with `best`."""
     return (
-        f"the k with {best} per case study {MODES}\n"
+        f"all k with {best} per case study {MODES}\n"
         f"marked opaque and in bold; // marks bar cut off;"
         f" the line at 0 is {BASELINE_NAME}"
     )
@@ -253,13 +253,24 @@ def _top(*over: str) -> pl.Expr:
     )
 
 
-def _tops(d: pl.DataFrame, by: Sequence[str], *keys: str | pl.Expr) -> pl.DataFrame:
+def _tops(
+    d: pl.DataFrame, by: Sequence[str], *keys: str | pl.Expr, ties: bool = False
+) -> pl.DataFrame:
     """`side` and `top` per `by` and scheduler: backoff is always top, and of each mode
-    the first by `keys` (nulls last), ties going to the smallest k."""
-    return (
-        d.with_columns(side=SIDE_OF)
-        .sort(*keys, K_OF, nulls_last=True)
-        .select(*by, "scheduler", "side", top=_top(*by))
+    the first by `keys` (nulls last), ties going to the smallest k, or with `ties` all
+    that tie with the first."""
+    d = d.with_columns(side=SIDE_OF).sort(*keys, K_OF, nulls_last=True)
+    if not ties:
+        return d.select(*by, "scheduler", "side", top=_top(*by))
+    exprs = [pl.col(k) if isinstance(k, str) else k for k in keys]
+    first = pl.all_horizontal(e == e.first().over(*by, "side") for e in exprs)
+    return d.select(
+        *by,
+        "scheduler",
+        "side",
+        top=pl.when(COST_SIDE)
+        .then(first.fill_null(False))
+        .otherwise(pl.col("side") == "backoff"),
     )
 
 
@@ -503,7 +514,14 @@ def ranking(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
         .agg(gain=(1 - _geomean(pl.col("cost") / pl.col("base"))) * 100)
     )
     return (
-        _bars(_titled(d, fin, picks=False), "gain")
+        # of each mode all with the largest reduction, the same order as `select`'s
+        # ratio to the best final cost
+        _bars(
+            _titled(
+                d, fin, _tops(d, ["case"], -pl.col("gain"), ties=True), picks=False
+            ),
+            "gain"
+        )
         + p9.facet_wrap("title", nrow=1, scales="free")
         + p9.labs(
             x=f"final cost reduction over {BASELINE_NAME} [%]",
@@ -670,8 +688,8 @@ def solved_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
         .join(base, on=facet)
         .with_columns(gain=(1 - pl.col("budget") / pl.col("base")) * 100)
     )
-    # per resource, of each mode the one with the smallest budget
-    d = _titled(d, fin, _tops(d, facet, "budget"), picks=False)
+    # per resource, of each mode all with the smallest budget
+    d = _titled(d, fin, _tops(d, facet, "budget", ties=True), picks=False)
     note = pl.format("fewer than {} proofs", pl.col("need"))
     return (
         _bars_noted(d, "gain", note, over=facet)
@@ -726,8 +744,8 @@ def cost_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
             )
         )
     )
-    # per resource, of each mode the one with the largest saving
-    d = _titled(d, fin, _tops(d, facet, -pl.col("gain")), picks=False)
+    # per resource, of each mode all with the largest saving
+    d = _titled(d, fin, _tops(d, facet, -pl.col("gain"), ties=True), picks=False)
     note = pl.format(
         "reached in {} of {} benchmarks", pl.col("reached"), pl.col("benchmarks")
     )
