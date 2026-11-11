@@ -33,6 +33,7 @@ struct Ctxt<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>> {
     cfg: CostConfig<L>,
 
     start: Instant,
+    matches: usize,
 }
 
 fn mk_iteration<'a, L: Language, N: Analysis<L> + Default, IterData: IterationData<L, N>>(ctxt: &mut Ctxt<'a, L, N, IterData>, stop_reason: Option<StopReason>, it_start: Instant) -> Iteration<IterData> {
@@ -69,6 +70,7 @@ fn dump_iteration<'a, L: Language, N: Analysis<L> + Default, IterData: Iteration
     let time = ctxt.start.elapsed().as_secs_f64();
     let it = ctxt.runner.iterations.len();
     let stop = &ctxt.runner.stop_reason;
+    let matches = ctxt.matches;
 
     use std::fs::OpenOptions;
     use std::io::Write;
@@ -79,7 +81,7 @@ fn dump_iteration<'a, L: Language, N: Analysis<L> + Default, IterData: Iteration
         .append(true)
         .open(path)
         .unwrap();
-    writeln!(file, "#ENTRY: costs={costs:?}, total_size={total_size}, time={time}, iteration={it}, stop={stop:?}").unwrap();
+    writeln!(file, "#ENTRY: costs={costs:?}, total_size={total_size}, time={time}, iteration={it}, matches={matches}, stop={stop:?}").unwrap();
 }
 
 impl<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>> Ctxt<'a, L, N, IterData> {
@@ -111,6 +113,7 @@ pub fn run<L: Language, N: Analysis<L> + Default, IterData: IterationData<L, N>>
         special_rules: mk_special_rules(),
 
         start: Instant::now(),
+        matches: 0,
     };
     let mut state = sched_init();
 
@@ -118,6 +121,7 @@ pub fn run<L: Language, N: Analysis<L> + Default, IterData: IterationData<L, N>>
     ctxt.runner.egraph.rebuild();
 
     while ctxt.runner.stop_reason.is_none() {
+        ctxt.matches = 0;
         let mut body = || {
             ctxt.check_limits()?;
 

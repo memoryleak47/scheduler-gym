@@ -11,6 +11,7 @@ fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
         let rhs_pat = rw.applier.get_pattern_ast();
 
         for m in sched.search_rewrite(ctxt.runner.iterations.len(), &ctxt.runner.egraph, rw) {
+            ctxt.matches += m.substs.len();
             ctxt.check_limits()?;
 
             let lhs = m.eclass;

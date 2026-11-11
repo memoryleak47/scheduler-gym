@@ -7,7 +7,9 @@ fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
         let mut matches = Vec::new();
 
         for rw in ctxt.rws {
-            matches.push(sched.search_rewrite(i, &ctxt.runner.egraph, rw));
+            let ms = sched.search_rewrite(i, &ctxt.runner.egraph, rw);
+            ctxt.matches += ms.iter().map(|m| m.substs.len()).sum::<usize>();
+            matches.push(ms);
             ctxt.check_limits()?;
         }
 
@@ -30,6 +32,7 @@ fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
         let effective_pat = rw.searcher.get_pattern_ast().unwrap();
 
         for m in sched.search_rewrite(ctxt.runner.iterations.len(), &ctxt.runner.egraph, rw) {
+            ctxt.matches += m.substs.len();
             ctxt.check_limits()?;
 
             let lhs = m.eclass;

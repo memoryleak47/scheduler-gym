@@ -73,7 +73,8 @@ RESOURCE_ROWS = pl.DataFrame({"resource": RESOURCES.values()}, {"resource": RESO
 
 ENTRY_PATTERN = (
     r"costs=\[(?P<costs>[^\]]*)\], total_size=(?P<size>\S+), time=(?P<time>\S+), "
-    r"iteration=(?P<iteration>\d+), stop=(?P<stop>.*)$"
+    # matches is missing in entries written before it was added
+    r"iteration=(?P<iteration>\d+), (?:matches=(?P<matches>\d+), )?stop=(?P<stop>.*)$"
 )
 
 
@@ -120,7 +121,7 @@ def _parse(path: Path) -> pl.DataFrame:
         schema={"line": pl.String},
     )
     df = lines.select(pl.col("line").str.extract_groups(ENTRY_PATTERN)).unnest("line")
-    if bad := df.null_count().sum_horizontal().item():
+    if bad := df.drop("matches").null_count().sum_horizontal().item():
         raise ValueError(f"{path}: {bad} fields of malformed entry lines")
     finished = (pl.col("stop").str.strip_chars() != "None").cast(pl.Int64)
     return df.filter(finished.cum_sum(reverse=True) > 0).select(
@@ -131,6 +132,9 @@ def _parse(path: Path) -> pl.DataFrame:
         cost=pl.col("costs").str.split(", ").cast(pl.List(pl.Float64)).list.sum(),
         size=pl.col("size").cast(pl.Float64),
         time=pl.col("time").cast(pl.Float64),
+        # substitutions returned by BackoffScheduler::search_rewrite in this iteration,
+        # 0 for schedulers that don't use it, null for old entries
+        matches=pl.col("matches").cast(pl.Int64),
         # lean-egg's goal hook stops the run on a proof, its cost stays above 1
         proved=pl.col("stop").str.contains("Proved goal", literal=True),
         # trig's unsound rules can merge different constants, its run then ends with
@@ -168,7 +172,8 @@ def load(*, root: Path = BENCHDATA) -> pl.DataFrame:
     paths = sorted(root.glob("*/*.entries"))
     # an enum, not a categorical, so cases sort (and facet) alphabetically as strings
     cases = pl.Enum(sorted({p.stem for p in paths}))
-    df = pl.concat([_cached(p, cache, cases) for p in paths], rechunk=True)
+    # diagonal: frames cached before `matches` was added lack that column
+    df = pl.concat([_cached(p, cache, cases) for p in paths], how="diagonal", rechunk=True)
     return _drop_panicked(df)
 
 

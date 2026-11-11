@@ -17,6 +17,7 @@ fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
 
     for (rw_i, rw) in ctxt.rws.iter().enumerate() {
         for m in sched.backoff.search_rewrite(ctxt.runner.iterations.len(), &ctxt.runner.egraph, rw) {
+            ctxt.matches += m.substs.len();
             ctxt.check_limits()?;
 
             let lhs = m.eclass;

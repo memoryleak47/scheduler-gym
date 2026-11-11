@@ -11,7 +11,9 @@ fn sched_iter<'a, L: Language, N: Analysis<L>, IterData: IterationData<L, N>>(ct
         let mut sched = BackoffScheduler::default();
 
         for rw in ctxt.rws {
-            matches.push(sched.search_rewrite(i, &ctxt.runner.egraph, rw));
+            let ms = sched.search_rewrite(i, &ctxt.runner.egraph, rw);
+            ctxt.matches += ms.iter().map(|m| m.substs.len()).sum::<usize>();
+            matches.push(ms);
             ctxt.check_limits()?;
         }
 
@@ -38,6 +40,7 @@ fn pat_inclusion_eqsat_step<'a, L: Language, N: Analysis<L>, IterData: Iteration
         let effective_pat = rw.applier.get_pattern_ast().unwrap_or_else(|| rw.searcher.get_pattern_ast().unwrap());
 
         for m in sched.search_rewrite(ctxt.runner.iterations.len(), &ctxt.runner.egraph, rw) {
+            ctxt.matches += m.substs.len();
             ctxt.check_limits()?;
 
             let lhs = m.eclass;
