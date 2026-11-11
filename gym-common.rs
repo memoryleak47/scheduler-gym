@@ -9,26 +9,6 @@ pub struct Limits {
     pub time_limit: Duration,
 }
 
-impl Limits {
-    /// The limit set by bench.py in GYM_TIME_LIMIT (seconds) or GYM_NODE_LIMIT (e-graph
-    /// size), the other one unlimited; `None` if neither is set.
-    fn from_env() -> Option<Limits> {
-        let var = |name| std::env::var(name).ok().filter(|v| !v.is_empty());
-        match (var("GYM_TIME_LIMIT"), var("GYM_NODE_LIMIT")) {
-            (None, None) => None,
-            (Some(t), None) => Some(Limits {
-                node_limit: usize::MAX,
-                time_limit: Duration::from_secs_f64(t.parse().expect("GYM_TIME_LIMIT must be a number of seconds")),
-            }),
-            (None, Some(n)) => Some(Limits {
-                node_limit: n.parse().expect("GYM_NODE_LIMIT must be a non-negative integer"),
-                time_limit: Duration::MAX,
-            }),
-            (Some(_), Some(_)) => panic!("GYM_TIME_LIMIT and GYM_NODE_LIMIT are mutually exclusive"),
-        }
-    }
-}
-
 pub struct CostConfig<L> {
     pub cf: fn(&L) -> Cost,
     pub offset: Cost,
@@ -126,8 +106,7 @@ pub fn run<L: Language, N: Analysis<L> + Default, IterData: IterationData<L, N>>
     let mut ctxt = Ctxt {
         runner,
         rws,
-        // the case study's own limits only when bench.py sets none
-        limits: Limits::from_env().unwrap_or(limits),
+        limits,
         cfg,
         special_rules: mk_special_rules(),
 

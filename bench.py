@@ -83,29 +83,11 @@ def find_tctl() -> Path | None:
     return None
 
 
-def parse_args() -> tuple[Path, dict[str, str], list[str]]:
-    """The output folder for the given limit, the env vars that pass it on to
-    gym-common.rs, and the schedulers to run."""
+def parse_args() -> list[str]:
+    """The schedulers to run."""
     parser = argparse.ArgumentParser(
-        description="Run every scheduler on every case study."
-    )
-    limit = parser.add_mutually_exclusive_group(required=True)
-    limit.add_argument(
-        "--time-limit",
-        type=float,
-        metavar="SECONDS",
-        help="stop each run after SECONDS, with no node limit",
-    )
-    limit.add_argument(
-        "--node-limit",
-        type=int,
-        metavar="NODES",
-        help="stop each run at an e-graph size of NODES, with no time limit",
-    )
-    limit.add_argument(
-        "--native-limit",
-        action="store_true",
-        help="keep each case study's own node and time limits",
+        description="Run every scheduler on every case study, with the case study's"
+        " own node and time limits."
     )
     parser.add_argument(
         "--schedulers",
@@ -127,29 +109,7 @@ def parse_args() -> tuple[Path, dict[str, str], list[str]]:
             if not any(re.fullmatch(rf"{re.escape(p)}(?:-\d+)?", s) for s in schedulers)
         ]:
             parser.error(f"no scheduler matches {', '.join(unmatched)}")
-    if args.native_limit:
-        # empty, not absent, so values inherited from the shell don't leak in;
-        # gym-common.rs treats empty as unset
-        return (
-            BENCHDATA / "native",
-            {"GYM_TIME_LIMIT": "", "GYM_NODE_LIMIT": ""},
-            schedulers,
-        )
-    if args.time_limit is not None:
-        if args.time_limit <= 0:
-            parser.error("--time-limit must be positive")
-        return (
-            BENCHDATA / f"time-{args.time_limit:g}",
-            {"GYM_TIME_LIMIT": str(args.time_limit)},
-            schedulers,
-        )
-    if args.node_limit <= 0:
-        parser.error("--node-limit must be positive")
-    return (
-        BENCHDATA / f"nodes-{args.node_limit}",
-        {"GYM_NODE_LIMIT": str(args.node_limit)},
-        schedulers,
-    )
+    return schedulers
 
 
 async def monitor(out: Path, cpus: list[int], running: dict[int, str]):
@@ -192,7 +152,6 @@ async def run_job(
     cpu: int,
     tmp: Path,
     out: Path,
-    limit_env: dict[str, str],
 ) -> bool:
     out_dir = out / f"{scheduler}.rs"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -208,7 +167,7 @@ async def run_job(
         proc = await asyncio.create_subprocess_exec(
             "taskset", "-c", str(cpu), "bash", "./run.sh", str(sched),
             cwd=cwd,
-            env={**os.environ, **limit_env, "GYM_ENTRIES": str(entries)},
+            env={**os.environ, "GYM_ENTRIES": str(entries)},
             stdout=f,
             stderr=asyncio.subprocess.STDOUT,
         )  # fmt: skip
@@ -244,14 +203,13 @@ async def worker(
     running: dict[int, str],
     tmp: Path,
     out: Path,
-    limit_env: dict[str, str],
 ):
     while jobs:
         case, scheduler = jobs.popleft()
         running[cpu] = f"{case}/{scheduler}"
         copy = await pools[case].acquire(cpu)
         try:
-            ok = await run_job(case, scheduler, copy, cpu, tmp, out, limit_env)
+            ok = await run_job(case, scheduler, copy, cpu, tmp, out)
         finally:
             pools[case].release(copy)
             running[cpu] = ""
@@ -263,7 +221,8 @@ async def worker(
         bars[case].update()
 
 
-async def main(out: Path, limit_env: dict[str, str], schedulers: list[str]):
+async def main(schedulers: list[str]):
+    out = BENCHDATA
     out.mkdir(parents=True, exist_ok=True)
     print(f"results in {out}")
     print(f"{len(schedulers)} schedulers: {', '.join(schedulers)}")
@@ -295,7 +254,7 @@ async def main(out: Path, limit_env: dict[str, str], schedulers: list[str]):
         async with asyncio.TaskGroup() as tg:
             for cpu in cpus:
                 tg.create_task(
-                    worker(cpu, jobs, pools, bars, running, Path(tmp), out, limit_env)
+                    worker(cpu, jobs, pools, bars, running, Path(tmp), out)
                 )
     for bar in bars.values():
         bar.close()
@@ -310,4 +269,4 @@ async def main(out: Path, limit_env: dict[str, str], schedulers: list[str]):
 
 
 if __name__ == "__main__":
-    asyncio.run(main(*parse_args()))
+    asyncio.run(main(parse_args()))

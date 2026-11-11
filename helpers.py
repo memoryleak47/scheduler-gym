@@ -161,12 +161,9 @@ def _cached(path: Path, cache: Path, cases: pl.Enum) -> pl.DataFrame:
     )
 
 
-def load(limit: str, *, root: Path = BENCHDATA) -> pl.DataFrame:
-    """One row per entry of the runs with `limit` (a folder of `root` that bench.py
-    wrote, e.g. "time-10" or "nodes-10000"); `run` numbers the runs in a file,
-    unfinished ones dropped. Runs that panicked are left out, and listed."""
-    root /= limit
-    # per limit, the files of different limits have the same names
+def load(*, root: Path = BENCHDATA) -> pl.DataFrame:
+    """One row per entry of the runs bench.py wrote to `root`; `run` numbers the runs
+    in a file, unfinished ones dropped. Runs that panicked are left out, and listed."""
     cache = root / ".cache"
     paths = sorted(root.glob("*/*.entries"))
     # an enum, not a categorical, so cases sort (and facet) alphabetically as strings
