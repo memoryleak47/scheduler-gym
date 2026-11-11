@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent
 BENCHDATA = ROOT / "benchdata"
 FIGURES = ROOT / "figures"
 
-KEY = ("case", "scheduler", "run")
+KEY = ("case", "scheduler", "benchmark")
 Resource = Literal["time", "size"]
 Side = Literal["backoff", "source", "outcome", "random", "other"]
 COLORS: dict[Side, str] = {
@@ -59,7 +59,7 @@ MODES = "for each mode (source/outcome/random)"
 def _bar_note(best: str) -> str:
     """Last lines of a bar chart's subtitle, the opaque bars being the k with `best`."""
     return (
-        f"the k with {best} per benchmark {MODES}\n"
+        f"the k with {best} per case study {MODES}\n"
         f"marked opaque and in bold; // marks bar cut off;"
         f" the line at 0 is {BASELINE_NAME}"
     )
@@ -112,7 +112,7 @@ def save(plot: p9.ggplot, name: str, size: tuple[float, float]) -> p9.ggplot:
 
 
 def _parse(path: Path) -> pl.DataFrame:
-    """Entries of one file; `run` numbers its runs, unfinished trailing ones dropped."""
+    """Entries of one file; `benchmark` numbers its benchmarks, unfinished trailing ones dropped."""
     lines = pl.read_csv(
         path,
         has_header=False,
@@ -127,7 +127,7 @@ def _parse(path: Path) -> pl.DataFrame:
     return df.filter(finished.cum_sum(reverse=True) > 0).select(
         pl.lit(path.stem).alias("case"),
         pl.lit(path.parent.name.removesuffix(".rs")).alias("scheduler"),
-        run=finished.cum_sum().shift(1, fill_value=0),
+        benchmark=finished.cum_sum().shift(1, fill_value=0),
         iteration=pl.col("iteration").cast(pl.Int64),
         cost=pl.col("costs").str.split(", ").cast(pl.List(pl.Float64)).list.sum(),
         size=pl.col("size").cast(pl.Float64),
@@ -135,9 +135,9 @@ def _parse(path: Path) -> pl.DataFrame:
         # substitutions returned by BackoffScheduler::search_rewrite in this iteration,
         # 0 for schedulers that don't use it, null for old entries
         matches=pl.col("matches").cast(pl.Int64),
-        # lean-egg's goal hook stops the run on a proof, its cost stays above 1
+        # lean-egg's goal hook stops the benchmark on a proof, its cost stays above 1
         proved=pl.col("stop").str.contains("Proved goal", literal=True),
-        # trig's unsound rules can merge different constants, its run then ends with
+        # trig's unsound rules can merge different constants, its benchmark then ends with
         # this stop and a copy of the last entry before the panic
         panicked=pl.col("stop").str.contains('Other("Panicked")', literal=True),
     )
@@ -166,8 +166,8 @@ def _cached(path: Path, cache: Path, cases: pl.Enum) -> pl.DataFrame:
 
 
 def load(*, root: Path = BENCHDATA) -> pl.DataFrame:
-    """One row per entry of the runs bench.py wrote to `root`; `run` numbers the runs
-    in a file, unfinished ones dropped. Runs that panicked are left out, and listed."""
+    """One row per entry of the benchmarks bench.py wrote to `root`; `benchmark` numbers
+    the benchmarks in a file, unfinished ones dropped. Benchmarks that panicked are left out, and listed."""
     cache = root / ".cache"
     paths = sorted(root.glob("*/*.entries"))
     # an enum, not a categorical, so cases sort (and facet) alphabetically as strings
@@ -178,20 +178,20 @@ def load(*, root: Path = BENCHDATA) -> pl.DataFrame:
 
 
 def _drop_panicked(df: pl.DataFrame) -> pl.DataFrame:
-    """`df` without the runs that panicked, printing how many per case and scheduler:
+    """`df` without the benchmarks that panicked, printing how many per case and scheduler:
     their e-graph merged different constants, so their costs can't be trusted."""
-    runs = df.group_by(KEY).agg(pl.col("panicked").any())
+    benchmarks = df.group_by(KEY).agg(pl.col("panicked").any())
     counts = (
-        runs.group_by("case", "scheduler")
-        .agg(pl.col("panicked").sum(), runs=pl.len())
+        benchmarks.group_by("case", "scheduler")
+        .agg(pl.col("panicked").sum(), benchmarks=pl.len())
         .filter(pl.col("panicked") > 0)
         .sort("case", "scheduler")
     )
     for case, scheduler, panicked, total in counts.iter_rows():
         print(
-            f"{case}: leaving out {panicked}/{total} runs of {scheduler} that panicked"
+            f"{case}: leaving out {panicked}/{total} benchmarks of {scheduler} that panicked"
         )
-    return df.join(runs.filter("panicked").select(KEY), on=KEY, how="anti").drop(
+    return df.join(benchmarks.filter("panicked").select(KEY), on=KEY, how="anti").drop(
         "panicked"
     )
 
@@ -199,8 +199,8 @@ def _drop_panicked(df: pl.DataFrame) -> pl.DataFrame:
 def select(
     df: pl.DataFrame, *, schedulers: Sequence[str]
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Rows of `schedulers` in that order, and finals: one row per run with the final
-    cost, the run's best final cost, resources to reach it, `side` and `top`."""
+    """Rows of `schedulers` in that order, and finals: one row per benchmark with the final
+    cost, the benchmark's best final cost, resources to reach it, `side` and `top`."""
     sides = pl.DataFrame({"scheduler": schedulers}).select("scheduler", side=SIDE_OF)
     if unknown := sides.filter(pl.col("side").is_null())["scheduler"].to_list():
         raise ValueError(f"schedulers without a side: {unknown}")
@@ -208,7 +208,7 @@ def select(
         pl.col("scheduler").cast(pl.String).cast(pl.Enum(schedulers))
     )
     fin = df.group_by(KEY, maintain_order=True).last()
-    fin = fin.with_columns(best=pl.col("cost").min().over("case", "run"))
+    fin = fin.with_columns(best=pl.col("cost").min().over("case", "benchmark"))
     reached = (
         df.join(fin.select(*KEY, "best"), on=KEY)
         .filter(pl.col("cost") <= pl.col("best"))
@@ -219,7 +219,7 @@ def select(
     fin = fin.join(reached, on=KEY, how="left")
 
     # of each mode the one with the lowest geomean of final cost relative to the best
-    # final cost of each run
+    # final cost of each benchmark
     ratios = fin.group_by("case", "scheduler").agg(
         ratio=_geomean(pl.col("cost") / pl.col("best"))
     )
@@ -227,16 +227,16 @@ def select(
     return df, fin.join(top, on=["case", "scheduler"], how="left")
 
 
-def check_runs(df: pl.DataFrame, *, schedulers: Sequence[str]):
-    """Print cases where `schedulers` have different numbers of finished runs, runs
-    that panicked counting as finished."""
+def check_benchmarks(df: pl.DataFrame, *, schedulers: Sequence[str]):
+    """Print cases where `schedulers` have different numbers of finished benchmarks,
+    benchmarks that panicked counting as finished."""
     _, fin = select(df, schedulers=schedulers)
-    # `run` is the goal's index in every scheduler's file, so runs left out in the
-    # middle (see `_drop_panicked`) don't count, only missing ones at the end
-    counts = fin.group_by("case", "scheduler").agg(len=pl.col("run").max() + 1)
+    # `benchmark` is the goal's index in every scheduler's file, so benchmarks left out in
+    # the middle (see `_drop_panicked`) don't count, only missing ones at the end
+    counts = fin.group_by("case", "scheduler").agg(len=pl.col("benchmark").max() + 1)
     for (case,), g in counts.group_by("case"):
         if g["len"].n_unique() > 1:
-            print(f"{case}: schedulers disagree on number of runs:")
+            print(f"{case}: schedulers disagree on number of benchmarks:")
             print(g.sort("len").select("scheduler", "len"))
 
 
@@ -270,7 +270,7 @@ def _titled(
     *,
     picks: bool = True,
 ) -> pl.DataFrame:
-    """`d` with `side`, `top` and a facet `title`: case, runs, top k of each mode.
+    """`d` with `side`, `top` and a facet `title`: case, benchmarks, top k of each mode.
     `tops`: `side` and `top` per scheduler and further keys, instead of `fin`'s;
     `picks`: whether the title lists the top k, bar charts show them anyway."""
     if tops is None:
@@ -278,16 +278,16 @@ def _titled(
     by = [c for c in tops.columns if c not in ("scheduler", "side", "top")]
     top = pl.col("top") & COST_SIDE
     pick = pl.format("{} {}", pl.col("side").cast(pl.String), K_OF)
-    runs = fin.group_by("case").agg(runs=pl.col("run").n_unique())
+    benchmarks = fin.group_by("case").agg(benchmarks=pl.col("benchmark").n_unique())
     titles = (
-        tops.join(runs, on="case")
+        tops.join(benchmarks, on="case")
         .group_by(by)
         .agg(
             # the top picks on a line of their own, they don't fit next to the case
             title=pl.format(
-                "{} ({} runs)\n{}",
+                "{} ({} benchmarks)\n{}",
                 pl.col("case").first(),
-                pl.col("runs").first(),
+                pl.col("benchmarks").first(),
                 pick.filter(top)
                 .sort_by(pl.col("side").filter(top), K_OF.filter(top))
                 .unique(maintain_order=True)
@@ -492,13 +492,13 @@ def _bars_noted(
 
 
 def ranking(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
-    """Final cost reduction over backoff in percent, geomean over runs."""
+    """Final cost reduction over backoff in percent, geomean over benchmarks."""
     _, fin = select(df, schedulers=schedulers)
     base = fin.filter(pl.col("scheduler") == BASELINE).select(
-        "case", "run", base=pl.col("cost")
+        "case", "benchmark", base=pl.col("cost")
     )
     d = (
-        fin.join(base, on=["case", "run"])
+        fin.join(base, on=["case", "benchmark"])
         .group_by("case", "scheduler")
         .agg(gain=(1 - _geomean(pl.col("cost") / pl.col("base"))) * 100)
     )
@@ -508,21 +508,21 @@ def ranking(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
         + p9.labs(
             x=f"final cost reduction over {BASELINE_NAME} [%]",
             title=f"Final cost relative to {BASELINE_NAME}",
-            subtitle=f"1 − geomean over runs of final cost / {BASELINE_NAME}'s final"
+            subtitle=f"1 − geomean over benchmarks of final cost / {BASELINE_NAME}'s final"
             f" cost; higher is better;\n{_bar_note('the lowest final cost')}",
         )
     )
 
 
 def solved(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
-    """Change in runs that proved the goal, relative to backoff in percent."""
+    """Change in benchmarks that proved the goal, relative to backoff in percent."""
     _, fin = select(df, schedulers=schedulers)
-    d = fin.group_by("case", "scheduler").agg(solved=PROVED.sum(), runs=pl.len())
+    d = fin.group_by("case", "scheduler").agg(solved=PROVED.sum(), benchmarks=pl.len())
     base = d.filter(pl.col("scheduler") == BASELINE).select(
-        "case", base="solved", base_runs="runs"
+        "case", base="solved", base_benchmarks="benchmarks"
     )
     for case, b, _ in base.iter_rows():
-        assert b > 0, f"{BASELINE} solved no runs of {case}"
+        assert b > 0, f"{BASELINE} solved no benchmarks of {case}"
     bases = ", ".join(f"{c} {b} of {r}" for c, b, r in base.sort("case").iter_rows())
     d = d.join(base, on="case").with_columns(
         gain=(pl.col("solved") / pl.col("base") - 1) * 100
@@ -541,9 +541,9 @@ def solved(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
         _bars(_titled(d, fin, tops, picks=False), "gain")
         + p9.facet_wrap("title", nrow=1, scales="free")
         + p9.labs(
-            x=f"more solved runs than {BASELINE_NAME} [%]",
+            x=f"more solved benchmarks than {BASELINE_NAME} [%]",
             title="Proved goals in the proof case studies",
-            subtitle=f"runs that proved the goal, relative to {BASELINE_NAME}'s;\n"
+            subtitle=f"benchmarks that proved the goal, relative to {BASELINE_NAME}'s;\n"
             f"{BASELINE_NAME} solved {bases}; higher is better;\n"
             + _bar_note("the most proofs"),
         )
@@ -564,7 +564,7 @@ def _per_resource(df: pl.DataFrame, *cols: str) -> pl.DataFrame:
 
 
 def _first_proofs(d: pl.DataFrame, proved: pl.Expr) -> pl.DataFrame:
-    """Per run and resource, `x` at the first proof; runs without one are left out."""
+    """Per benchmark and resource, `x` at the first proof; benchmarks without one are left out."""
     return (
         d.filter(proved)
         .group_by(*KEY, "resource", maintain_order=True)
@@ -575,16 +575,16 @@ def _first_proofs(d: pl.DataFrame, proved: pl.Expr) -> pl.DataFrame:
 def solved_profile(
     df: pl.DataFrame, schedulers: Sequence[str], *, y_min: float = 0, y_max: float = 1
 ) -> p9.ggplot:
-    """Fraction of runs that proved the goal within a resource budget.
+    """Fraction of benchmarks that proved the goal within a resource budget.
     `y_min`, `y_max`: ends of the y axis, to zoom in on a range."""
     df, fin = select(df, schedulers=schedulers)
     group = ["case", "resource", "scheduler"]
     d = _per_resource(df, "cost", "proved")
-    runs = fin.group_by("case", "scheduler").agg(runs=pl.len())
+    benchmarks = fin.group_by("case", "scheduler").agg(benchmarks=pl.len())
     proofs = (
         _first_proofs(d, PROVED)
-        .join(runs, on=["case", "scheduler"])
-        .with_columns(y=pl.col("x").rank("ordinal").over(group) / pl.col("runs"))
+        .join(benchmarks, on=["case", "scheduler"])
+        .with_columns(y=pl.col("x").rank("ordinal").over(group) / pl.col("benchmarks"))
     )
     # without any proof, the curves start at the smallest resource used at all
     lo = d.group_by("case", "resource").agg(
@@ -621,7 +621,7 @@ def solved_profile(
         + p9.coord_cartesian(ylim=(y_min, y_max))
         + p9.labs(
             x="",
-            y="runs with a proof",
+            y="benchmarks with a proof",
             title="Fraction of problems proven within a time / e-graph size budget"
             " in the proof case studies",
             subtitle=f"{BASELINE_NAME} and the k with the most proofs for each mode"
@@ -632,7 +632,7 @@ def solved_profile(
 
 
 def solved_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
-    """Resource budget a scheduler needs to prove as many runs as backoff does in
+    """Resource budget a scheduler needs to prove as many benchmarks as backoff does in
     total, as savings over backoff's budget in percent; schedulers that prove fewer
     get no bar."""
     df, fin = select(df, schedulers=schedulers)
@@ -644,7 +644,7 @@ def solved_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
         .agg(need=pl.len())
     )
     for case in fin["case"].unique():
-        assert case in need["case"], f"{BASELINE} solved no runs of {case}"
+        assert case in need["case"], f"{BASELINE} solved no benchmarks of {case}"
     bases = ", ".join(
         f"{c} {n}"
         for c, n in need.group_by("case")
@@ -678,9 +678,9 @@ def solved_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
         + _facets("free")
         + p9.labs(
             x=f"less budget than {BASELINE_NAME} [%]",
-            title=f"Budget to prove as many runs as {BASELINE_NAME}"
+            title=f"Budget to prove as many benchmarks as {BASELINE_NAME}"
             " in the proof case studies",
-            subtitle="time / e-graph size until as many runs are proved as"
+            subtitle="time / e-graph size until as many benchmarks are proved as"
             f" {BASELINE_NAME} proves in total\n({bases}), relative to"
             f" {BASELINE_NAME}'s; higher is better;\n"
             + _bar_note("the smallest budget"),
@@ -689,55 +689,57 @@ def solved_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
 
 
 def cost_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
-    """Resource budget until a run first reaches backoff's final cost of that run, as
-    savings over backoff's budget in percent, 1 − geomean over runs; schedulers that
-    miss it in some run get no bar."""
+    """Resource budget until a benchmark first reaches backoff's final cost of that
+    benchmark, as savings over backoff's budget in percent, 1 − geomean over
+    benchmarks; schedulers that miss it in some benchmark get no bar."""
     df, fin = select(df, schedulers=schedulers)
     facet = ["case", "resource"]
     goal = fin.filter(pl.col("scheduler") == BASELINE).select(
-        "case", "run", goal="cost"
+        "case", "benchmark", goal="cost"
     )
     reached = (
         _per_resource(df, "cost")
-        .join(goal, on=["case", "run"])
+        .join(goal, on=["case", "benchmark"])
         .filter(pl.col("cost") <= pl.col("goal"))
         .group_by(*KEY, "resource", maintain_order=True)
         .agg(budget=pl.col("x").first())
     )
     base = reached.filter(pl.col("scheduler") == BASELINE).select(
-        "case", "run", "resource", base="budget"
+        "case", "benchmark", "resource", base="budget"
     )
     budgets = (
-        reached.join(base, on=["case", "run", "resource"])
+        reached.join(base, on=["case", "benchmark", "resource"])
         .group_by(*facet, "scheduler")
         .agg(ratio=_geomean(pl.col("budget") / pl.col("base")), reached=pl.len())
     )
     every = (
         fin.group_by("case", "scheduler")
-        .agg(runs=pl.len())
+        .agg(benchmarks=pl.len())
         .join(RESOURCE_ROWS, how="cross")
     )
     d = (
         every.join(budgets, on=[*facet, "scheduler"], how="left")
         .with_columns(pl.col("reached").fill_null(0))
         .with_columns(
-            gain=pl.when(pl.col("reached") == pl.col("runs")).then(
+            gain=pl.when(pl.col("reached") == pl.col("benchmarks")).then(
                 (1 - pl.col("ratio")) * 100
             )
         )
     )
     # per resource, of each mode the one with the largest saving
     d = _titled(d, fin, _tops(d, facet, -pl.col("gain")), picks=False)
-    note = pl.format("reached in {} of {} runs", pl.col("reached"), pl.col("runs"))
+    note = pl.format(
+        "reached in {} of {} benchmarks", pl.col("reached"), pl.col("benchmarks")
+    )
     return (
         _bars_noted(d, "gain", note, over=facet)
         + _facets("free")
         + p9.labs(
             x=f"less budget than {BASELINE_NAME} [%]",
             title=f"Budget to reach {BASELINE_NAME}'s final cost",
-            subtitle="time / e-graph size until a run first reaches"
+            subtitle="time / e-graph size until a benchmark first reaches"
             f" {BASELINE_NAME}'s final cost,\nrelative to {BASELINE_NAME}'s;"
-            " 1 − geomean over runs; higher is better;\n"
+            " 1 − geomean over benchmarks; higher is better;\n"
             + _bar_note("the largest saving"),
         )
     )
@@ -753,14 +755,14 @@ def _grid(d: pl.DataFrame, by: list[str], log: bool, n: int = 300) -> pl.DataFra
 
 
 def _geomean_curves(d: pl.DataFrame, by: list[str], grid: pl.DataFrame) -> pl.DataFrame:
-    """Geomean of `rel` at each `x` of `grid`, runs held at their ends."""
-    run = [*by, "scheduler", "run"]
-    d = d.select(*run, "x", "rel").sort("x", maintain_order=True)
-    starts = d.group_by(run).agg(start=pl.col("rel").first())
+    """Geomean of `rel` at each `x` of `grid`, benchmarks held at their ends."""
+    bench = [*by, "scheduler", "benchmark"]
+    d = d.select(*bench, "x", "rel").sort("x", maintain_order=True)
+    starts = d.group_by(bench).agg(start=pl.col("rel").first())
     return (
         grid.join(starts, on=by)
         .sort("x")
-        .join_asof(d, on="x", by=run, check_sortedness=False)
+        .join_asof(d, on="x", by=bench, check_sortedness=False)
         .group_by(*by, "scheduler", "x")
         .agg(rel=_geomean(pl.col("rel").fill_null(pl.col("start"))))
     )
@@ -769,7 +771,7 @@ def _geomean_curves(d: pl.DataFrame, by: list[str], grid: pl.DataFrame) -> pl.Da
 def quality(
     df: pl.DataFrame, schedulers: Sequence[str], *, log: bool = False
 ) -> p9.ggplot:
-    """Cost relative to the run's best final cost over resource, geomean over runs.
+    """Cost relative to the benchmark's best final cost over resource, geomean over benchmarks.
     `log`: log x and y axes."""
     df, fin = select(df, schedulers=schedulers)
     df = df.join(fin.select(*KEY, "best"), on=KEY)
@@ -784,9 +786,9 @@ def quality(
             x="",
             y="cost / best final cost (geomean)",
             title="Cost over time and e-graph size",
-            subtitle="cost relative to the best final cost of each run,"
-            " geometric mean over runs;\n"
-            f"{BASELINE_NAME} and the k with the lowest final cost per benchmark"
+            subtitle="cost relative to the best final cost of each benchmark,"
+            " geometric mean over benchmarks;\n"
+            f"{BASELINE_NAME} and the k with the lowest final cost per case study"
             f" {MODES} marked opaque;\nlower is better",
         )
     )
