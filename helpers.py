@@ -101,13 +101,17 @@ def setup_style(dpi: int = 100):
     )
 
 
-def save(plot: p9.ggplot, name: str, size: tuple[float, float]) -> p9.ggplot:
-    """Write `plot` to figures/`name`.pdf and return it for display.
+def size(width: float, height: float) -> p9.theme:
+    """Figure size in inches, to add to a plot: `plot + size(12, 4)`."""
+    return p9.theme(figure_size=(width, height))
+
+
+def save(plot: p9.ggplot, name: str) -> None:
+    """Write `plot` to figures/`name`.pdf.
 
     Also writes figures/`name`-no-title.pdf without title and subtitle, for use
     in a tex file, and prints them so they can go into the caption.
     """
-    plot += p9.theme(figure_size=size)
     FIGURES.mkdir(exist_ok=True)
     plot.save(FIGURES / f"{name}.pdf", verbose=False)
     bare = plot + p9.theme(
@@ -115,7 +119,6 @@ def save(plot: p9.ggplot, name: str, size: tuple[float, float]) -> p9.ggplot:
     )
     bare.save(FIGURES / f"{name}-no-title.pdf", verbose=False)
     print(f"{name}\n{plot.labels.get('title', '')}\n{plot.labels.get('subtitle', '')}")
-    return plot
 
 
 def _parse(path: Path) -> pl.DataFrame:
