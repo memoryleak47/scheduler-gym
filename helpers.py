@@ -780,6 +780,64 @@ def cost_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
     )
 
 
+def apply_rate(
+    df: pl.DataFrame,
+    schedulers: Sequence[str],
+    *,
+    ks: Sequence[int] | None = None,
+    log: bool = False,
+) -> p9.ggplot:
+    """Fraction of the available matches applied per iteration, geomean over the
+    benchmarks still running; one row per mode, one column per case, one curve per k.
+    Backoff applies all it gets, so it is left out, and so are iterations without matches.
+    `ks`: the k to show, all of `schedulers`' by default; `log`: log x axis."""
+    if ks is not None:
+        named = pl.DataFrame({"scheduler": schedulers}).with_columns(k=K_OF)
+        if missing := set(ks) - set(named["k"]):
+            raise ValueError(f"ks not in schedulers: {sorted(missing)}")
+        schedulers = named.filter(pl.col("k").is_in(ks))["scheduler"].to_list()
+    df, fin = select(df, schedulers=schedulers)
+    benchmarks = fin.group_by("case").agg(n=pl.col("benchmark").n_unique())
+    d = (
+        df.filter(pl.col("matches") > 0)
+        .with_columns(side=SIDE_OF, k=K_OF)
+        .filter(COST_SIDE)
+        .group_by("case", "side", "scheduler", "k", "iteration")
+        .agg(rate=_geomean(APPLIED / pl.col("matches")))
+        .join(benchmarks, on="case")
+        .with_columns(title=pl.format("{} ({} benchmarks)", pl.col("case"), pl.col("n")))
+        .sort("iteration")
+    )
+    ks = sorted(d["k"].unique())
+    d = d.with_columns(
+        # ordered, so the legend and the colors follow k
+        k=pl.col("k").cast(pl.String).cast(pl.Enum([str(k) for k in ks])),
+        side=pl.col("side").cast(pl.String).cast(pl.Enum(["lhs", "rhs", "random"])),
+    )
+    return (
+        p9.ggplot(d, p9.aes("iteration", "rate", color="k", group="scheduler"))
+        + p9.geom_step(size=0.8)
+        + p9.facet_grid("side", "title", scales="free_x")
+        + (p9.scale_x_log10() if log else p9.scale_x_continuous())
+        + p9.scale_y_log10()
+        # sequential, as k is a magnitude; without viridis' yellow end, too light on white
+        + p9.scale_color_manual(
+            values=[
+                mpl.colors.to_hex(mpl.colormaps["viridis"](i / max(len(ks) - 1, 1) * 0.85))
+                for i in range(len(ks))
+            ],
+            name="k",
+        )
+        + p9.labs(
+            x="iteration",
+            y="applied / available matches (geomean)",
+            title="Fraction of the available matches applied per iteration",
+            subtitle="min(k, matches) / matches, geometric mean over the benchmarks still"
+            " running at that iteration;\niterations without matches left out",
+        )
+    )
+
+
 def _grid(d: pl.DataFrame, by: list[str], log: bool, n: int = 300) -> pl.DataFrame:
     """`n` evenly (or log-) spaced `x` per group of `by`."""
     lo, hi = pl.col("x").min(), pl.col("x").max()
