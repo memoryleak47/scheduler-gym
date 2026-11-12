@@ -11,11 +11,11 @@ from matplotlib.path import Path as MplPath
 from bench import SCHEDULERS
 
 ROOT = Path(__file__).resolve().parent
-BENCHDATA = ROOT / "benchdata-old"
+BENCHDATA = ROOT / "benchdata"
 FIGURES = ROOT / "figures"
 
 KEY = ("case", "scheduler", "benchmark")
-Resource = Literal["time", "size"]
+Resource = Literal["time", "size", "rewrites"]
 Side = Literal["backoff", "source", "outcome", "random", "other"]
 COLORS: dict[Side, str] = {
     "backoff": "black",
@@ -65,7 +65,14 @@ def _bar_note(best: str) -> str:
     )
 
 
-RESOURCES: dict[Resource, str] = {"time": "time [s]", "size": "e-graph size"}
+RESOURCES: dict[Resource, str] = {
+    "time": "time [s]",
+    "size": "e-graph size",
+    "rewrites": "rewrites applied",
+}
+# rewrites applied in an iteration: the k-schedulers apply at most k of the matches,
+# backoff (no k) applies all it returns
+APPLIED = pl.min_horizontal(K_OF, pl.col("matches"))
 # the labels as ordered categories, so facets come in this order
 RESOURCE = pl.Enum(RESOURCES.values())
 # one row per resource, to cross join with
@@ -205,7 +212,9 @@ def select(
     if unknown := sides.filter(pl.col("side").is_null())["scheduler"].to_list():
         raise ValueError(f"schedulers without a side: {unknown}")
     df = df.filter(pl.col("scheduler").is_in(schedulers)).with_columns(
-        pl.col("scheduler").cast(pl.String).cast(pl.Enum(schedulers))
+        pl.col("scheduler").cast(pl.String).cast(pl.Enum(schedulers)),
+        # rewrites applied so far in the benchmark
+        rewrites=APPLIED.cum_sum().over(KEY).cast(pl.Float64),
     )
     fin = df.group_by(KEY, maintain_order=True).last()
     fin = fin.with_columns(best=pl.col("cost").min().over("case", "benchmark"))
@@ -640,7 +649,7 @@ def solved_profile(
         + p9.labs(
             x="",
             y="benchmarks with a proof",
-            title="Fraction of problems proven within a time / e-graph size budget"
+            title="Fraction of problems proven within a time / e-graph size / rewrites budget"
             " in the proof case studies",
             subtitle=f"{BASELINE_NAME} and the k with the most proofs for each mode"
             " (source/outcome/random,\nties go to the smaller budget at the last proof)"
@@ -698,7 +707,7 @@ def solved_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
             x=f"less budget than {BASELINE_NAME} [%]",
             title=f"Budget to prove as many benchmarks as {BASELINE_NAME}"
             " in the proof case studies",
-            subtitle="time / e-graph size until as many benchmarks are proved as"
+            subtitle="time / e-graph size / rewrites until as many benchmarks are proved as"
             f" {BASELINE_NAME} proves in total\n({bases}), relative to"
             f" {BASELINE_NAME}'s; higher is better;\n"
             + _bar_note("the smallest budget"),
@@ -755,7 +764,7 @@ def cost_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
         + p9.labs(
             x=f"less budget than {BASELINE_NAME} [%]",
             title=f"Budget to reach {BASELINE_NAME}'s final cost",
-            subtitle="time / e-graph size until a benchmark first reaches"
+            subtitle="time / e-graph size / rewrites until a benchmark first reaches"
             f" {BASELINE_NAME}'s final cost,\nrelative to {BASELINE_NAME}'s;"
             " 1 − geomean over benchmarks; higher is better;\n"
             + _bar_note("the largest saving"),
@@ -803,7 +812,7 @@ def quality(
         + p9.labs(
             x="",
             y="cost / best final cost (geomean)",
-            title="Cost over time and e-graph size",
+            title="Cost over time, e-graph size and rewrites applied",
             subtitle="cost relative to the best final cost of each benchmark,"
             " geometric mean over benchmarks;\n"
             f"{BASELINE_NAME} and the k with the lowest final cost per case study"
