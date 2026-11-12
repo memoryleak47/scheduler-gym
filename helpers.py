@@ -600,10 +600,15 @@ def _first_proofs(d: pl.DataFrame, proved: pl.Expr) -> pl.DataFrame:
 
 
 def solved_profile(
-    df: pl.DataFrame, schedulers: Sequence[str], *, y_min: float = 0, y_max: float = 1
+    df: pl.DataFrame,
+    schedulers: Sequence[str],
+    *,
+    y_min: float = 0,
+    y_max: float = 1,
+    log: bool = False
 ) -> p9.ggplot:
     """Fraction of benchmarks that proved the goal within a resource budget.
-    `y_min`, `y_max`: ends of the y axis, to zoom in on a range."""
+    `y_min`, `y_max`: ends of the y axis, to zoom in on a range; `log`: log x axis."""
     df, fin = select(df, schedulers=schedulers)
     group = ["case", "resource", "scheduler"]
     d = _per_resource(df, "cost", "proved")
@@ -643,7 +648,7 @@ def solved_profile(
     most = -pl.col("n").cast(pl.Int64)
     curves = _titled(curves, fin, _tops(ends, ["case", "resource"], most, "last"))
     return (
-        _steps(curves, "y", log=False)
+        _steps(curves, "y", log=log)
         + _facets("free_x")
         + p9.coord_cartesian(ylim=(y_min, y_max))
         + p9.labs(
