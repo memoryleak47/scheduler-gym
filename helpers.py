@@ -539,7 +539,7 @@ def ranking(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
         )
         + p9.facet_wrap("title", nrow=1, scales="free")
         + p9.labs(
-            x=f"final cost reduction over {BASELINE_NAME} [%]",
+            x=f"final cost reduction over {BASELINE_NAME}",
             title=f"Final cost relative to {BASELINE_NAME}",
             subtitle=f"1 − geomean over benchmarks of final cost / {BASELINE_NAME}'s final"
             f" cost; higher is better;\n{_bar_note('the lowest final cost')}",
@@ -574,7 +574,7 @@ def solved(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
         _bars(_titled(d, fin, tops, picks=False), "gain")
         + p9.facet_wrap("title", nrow=1, scales="free")
         + p9.labs(
-            x=f"more solved benchmarks than {BASELINE_NAME} [%]",
+            x=f"more solved benchmarks than {BASELINE_NAME}",
             title="Proved goals in the proof case studies",
             subtitle=f"benchmarks that proved the goal, relative to {BASELINE_NAME}'s;\n"
             f"{BASELINE_NAME} solved {bases}; higher is better;\n"
@@ -723,7 +723,7 @@ def solved_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
         _bars_noted(d, "gain", note, over=facet)
         + _case_grid("free")
         + p9.labs(
-            x=f"less budget than {BASELINE_NAME} [%]",
+            x=f"less budget than {BASELINE_NAME}",
             title=f"Budget to prove as many benchmarks as {BASELINE_NAME}"
             " in the proof case studies",
             subtitle="time / e-graph size / rewrites until as many benchmarks are proved as"
@@ -781,7 +781,7 @@ def cost_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
         _bars_noted(d, "gain", note, over=facet)
         + _case_grid("free")
         + p9.labs(
-            x=f"less budget than {BASELINE_NAME} [%]",
+            x=f"less budget than {BASELINE_NAME}",
             title=f"Budget to reach {BASELINE_NAME}'s final cost",
             subtitle="time / e-graph size / rewrites until a benchmark first reaches"
             f" {BASELINE_NAME}'s final cost,\nrelative to {BASELINE_NAME}'s;"
@@ -835,7 +835,7 @@ def apply_rate(
         + p9.geom_step(size=0.8)
         + p9.facet_grid("side", "title", scales="free_x")
         + (p9.scale_x_log10() if log else p9.scale_x_continuous())
-        + p9.scale_y_log10()
+        + p9.scale_y_log10(labels=lambda ys: [f"{y * 100:g}%" for y in ys])
         # sequential, as k is a magnitude; without viridis' yellow end, too light on white
         + p9.scale_color_manual(
             values=[
