@@ -68,9 +68,9 @@ def _bar_note(best: str) -> str:
 
 
 RESOURCES: dict[Resource, str] = {
-    "time": "time [s]",
-    "size": "e-graph size",
-    "rewrites": "rewrites applied",
+    "time": "Time [s]",
+    "size": "E-graph size",
+    "rewrites": "Rewrites applied",
 }
 # rewrites applied in an iteration: the k-schedulers apply at most k of the matches,
 # backoff (no k) applies all it returns
@@ -539,7 +539,7 @@ def ranking(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
         )
         + p9.facet_wrap("title", nrow=1, scales="free")
         + p9.labs(
-            x=f"final cost reduction over {BASELINE_NAME}",
+            x=f"Cost reduction vs. {BASELINE_NAME}",
             title=f"Final cost relative to {BASELINE_NAME}",
             subtitle=f"1 − geomean over benchmarks of final cost / {BASELINE_NAME}'s final"
             f" cost; higher is better;\n{_bar_note('the lowest final cost')}",
@@ -574,7 +574,7 @@ def solved(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
         _bars(_titled(d, fin, tops, picks=False), "gain")
         + p9.facet_wrap("title", nrow=1, scales="free")
         + p9.labs(
-            x=f"more solved benchmarks than {BASELINE_NAME}",
+            x=f"Extra solved vs. {BASELINE_NAME}",
             title="Proved goals in the proof case studies",
             subtitle=f"benchmarks that proved the goal, relative to {BASELINE_NAME}'s;\n"
             f"{BASELINE_NAME} solved {bases}; higher is better;\n"
@@ -667,7 +667,7 @@ def solved_profile(
         + p9.coord_cartesian(ylim=(y_min, y_max))
         + p9.labs(
             x="",
-            y="benchmarks with a proof",
+            y="Benchmarks with a proof",
             title="Fraction of problems proven within a time / e-graph size / rewrites budget"
             " in the proof case studies",
             subtitle=f"{BASELINE_NAME} and the k with the most proofs for each mode"
@@ -723,7 +723,7 @@ def solved_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
         _bars_noted(d, "gain", note, over=facet)
         + _case_grid("free")
         + p9.labs(
-            x=f"less budget than {BASELINE_NAME}",
+            x=f"Budget saved vs. {BASELINE_NAME}",
             title=f"Budget to prove as many benchmarks as {BASELINE_NAME}"
             " in the proof case studies",
             subtitle="time / e-graph size / rewrites until as many benchmarks are proved as"
@@ -781,7 +781,7 @@ def cost_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
         _bars_noted(d, "gain", note, over=facet)
         + _case_grid("free")
         + p9.labs(
-            x=f"less budget than {BASELINE_NAME}",
+            x=f"Budget saved vs. {BASELINE_NAME}",
             title=f"Budget to reach {BASELINE_NAME}'s final cost",
             subtitle="time / e-graph size / rewrites until a benchmark first reaches"
             f" {BASELINE_NAME}'s final cost,\nrelative to {BASELINE_NAME}'s;"
@@ -847,8 +847,8 @@ def apply_rate(
             name="k",
         )
         + p9.labs(
-            x="iteration",
-            y="applied / available matches (geomean)",
+            x="Iteration",
+            y="Applied / available matches (geomean)",
             title="Fraction of the available matches applied per iteration",
             subtitle="min(k, matches) / matches, geometric mean over the benchmarks still"
             " running at that iteration;\niterations without matches left out",
@@ -896,7 +896,7 @@ def quality(
         + (p9.scale_y_log10() if log else p9.scale_y_continuous())
         + p9.labs(
             x="",
-            y="cost / best final cost (geomean)",
+            y="Cost / best final cost (geomean)",
             title="Cost over time, e-graph size and rewrites applied",
             subtitle="cost relative to the best final cost of each benchmark,"
             " geometric mean over benchmarks;\n"
