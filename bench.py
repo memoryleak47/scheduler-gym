@@ -146,12 +146,7 @@ async def monitor(out: Path, cpus: list[int], running: dict[int, str]):
 
 
 async def run_job(
-    case: str,
-    scheduler: str,
-    cwd: Path,
-    cpu: int,
-    tmp: Path,
-    out: Path,
+    case: str, scheduler: str, cwd: Path, cpu: int, tmp: Path, out: Path
 ) -> bool:
     out_dir = out / f"{scheduler}.rs"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -240,9 +235,7 @@ async def main(schedulers: list[str]):
     width = max(map(len, CASE_STUDIES))
     bars = {
         case: tqdm(
-            desc=case.ljust(width),
-            position=i,
-            total=sum(c == case for c, _ in jobs),
+            desc=case.ljust(width), position=i, total=sum(c == case for c, _ in jobs)
         )
         for i, case in enumerate(CASE_STUDIES)
     }
@@ -253,9 +246,7 @@ async def main(schedulers: list[str]):
     with tempfile.TemporaryDirectory() as tmp:
         async with asyncio.TaskGroup() as tg:
             for cpu in cpus:
-                tg.create_task(
-                    worker(cpu, jobs, pools, bars, running, Path(tmp), out)
-                )
+                tg.create_task(worker(cpu, jobs, pools, bars, running, Path(tmp), out))
     for bar in bars.values():
         bar.close()
     mon.cancel()
