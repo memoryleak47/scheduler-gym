@@ -52,8 +52,10 @@ ZOOM = 100
 # space between the modes in the bar charts, in bar rows
 MODE_GAP = 0.5
 # how the baseline is called in the plot texts
-BASELINE_NAME = "BackoffScheduler"
-MODES = "for each mode (lhs/rhs/random)"
+BASELINE_NAME = "Backoff"
+# how the sides are called in the plot texts
+SHOWN = {"lhs": "LHS", "rhs": "RHS", "random": "Random"}
+MODES = "for each mode (LHS/RHS/Random)"
 
 
 def _bar_note(best: str) -> str:
@@ -183,7 +185,9 @@ def load(*, root: Path = BENCHDATA) -> pl.DataFrame:
     # an enum, not a categorical, so cases sort (and facet) alphabetically as strings
     cases = pl.Enum(sorted({p.stem for p in paths}))
     # diagonal: frames cached before `matches` was added lack that column
-    df = pl.concat([_cached(p, cache, cases) for p in paths], how="diagonal", rechunk=True)
+    df = pl.concat(
+        [_cached(p, cache, cases) for p in paths], how="diagonal", rechunk=True
+    )
     return _drop_panicked(df)
 
 
@@ -300,7 +304,7 @@ def _titled(
         tops = fin.select("case", "scheduler", "side", "top").unique()
     by = [c for c in tops.columns if c not in ("scheduler", "side", "top")]
     top = pl.col("top") & COST_SIDE
-    pick = pl.format("{} {}", pl.col("side").cast(pl.String), K_OF)
+    pick = pl.format("{} {}", pl.col("side").cast(pl.String).replace(SHOWN), K_OF)
     benchmarks = fin.group_by("case").agg(benchmarks=pl.col("benchmark").n_unique())
     titles = (
         tops.join(benchmarks, on="case")
@@ -357,8 +361,10 @@ def _steps(d: pl.DataFrame, y: str, *, log: bool) -> p9.ggplot:
         + p9.scale_color_manual(
             values=COLORS,
             breaks=breaks,
-            labels=[BASELINE_NAME if s == BASELINE else s for s in breaks],
-            name="scheduler",
+            labels=[
+                BASELINE_NAME if s == BASELINE else SHOWN.get(s, s) for s in breaks
+            ],
+            name="Schedulers",
         )
     )
 
@@ -400,8 +406,9 @@ def _positions(d: pl.DataFrame) -> tuple[pl.DataFrame, list[float], list[str]]:
     where = pl.DataFrame(
         {"scheduler": names, "pos": breaks}, {"scheduler": dtype, "pos": pl.Float64}
     )
-    # lhs-cost-400 -> lhs 400, random-400 -> random 400
+    # lhs-cost-400 -> LHS 400, random-400 -> Random 400
     labels = [re.sub(r"(-cost)?-(\d+)$", r" \2", s) for s in names]
+    labels = [re.sub(r"^\w+", lambda m: SHOWN.get(m[0], m[0]), s) for s in labels]
     return d.join(where, on="scheduler"), breaks, labels
 
 
@@ -528,7 +535,7 @@ def ranking(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
             _titled(
                 d, fin, _tops(d, ["case"], -pl.col("gain"), ties=True), picks=False
             ),
-            "gain"
+            "gain",
         )
         + p9.facet_wrap("title", nrow=1, scales="free")
         + p9.labs(
@@ -604,7 +611,7 @@ def solved_profile(
     *,
     y_min: float = 0,
     y_max: float = 1,
-    log: bool = False
+    log: bool = False,
 ) -> p9.ggplot:
     """Fraction of benchmarks that proved the goal within a resource budget.
     `y_min`, `y_max`: ends of the y axis, to zoom in on a range; `log`: log x axis."""
@@ -648,8 +655,10 @@ def solved_profile(
     curves = _titled(curves, fin, _tops(ends, ["case", "resource"], most, "last"))
     # the top k are picked per resource, but the column title can only list them if
     # they agree across a case's resources
-    differ = curves.group_by("case").agg(pl.col("title").unique()).filter(
-        pl.col("title").list.len() > 1
+    differ = (
+        curves.group_by("case")
+        .agg(pl.col("title").unique())
+        .filter(pl.col("title").list.len() > 1)
     )
     assert differ.is_empty(), f"top k differ between resources:\n{differ}"
     return (
@@ -662,7 +671,7 @@ def solved_profile(
             title="Fraction of problems proven within a time / e-graph size / rewrites budget"
             " in the proof case studies",
             subtitle=f"{BASELINE_NAME} and the k with the most proofs for each mode"
-            " (lhs/rhs/random,\nties go to the smaller budget at the last proof)"
+            " (LHS/RHS/Random,\nties go to the smaller budget at the last proof)"
             " marked opaque;\nhigher is better",
         )
     )
@@ -807,14 +816,19 @@ def apply_rate(
         .group_by("case", "side", "scheduler", "k", "iteration")
         .agg(rate=_geomean(APPLIED / pl.col("matches")))
         .join(benchmarks, on="case")
-        .with_columns(title=pl.format("{} ({} benchmarks)", pl.col("case"), pl.col("n")))
+        .with_columns(
+            title=pl.format("{} ({} benchmarks)", pl.col("case"), pl.col("n"))
+        )
         .sort("iteration")
     )
     ks = sorted(d["k"].unique())
     d = d.with_columns(
         # ordered, so the legend and the colors follow k
         k=pl.col("k").cast(pl.String).cast(pl.Enum([str(k) for k in ks])),
-        side=pl.col("side").cast(pl.String).cast(pl.Enum(["lhs", "rhs", "random"])),
+        side=pl.col("side")
+        .cast(pl.String)
+        .replace(SHOWN)
+        .cast(pl.Enum([*SHOWN.values()])),
     )
     return (
         p9.ggplot(d, p9.aes("iteration", "rate", color="k", group="scheduler"))
@@ -825,7 +839,9 @@ def apply_rate(
         # sequential, as k is a magnitude; without viridis' yellow end, too light on white
         + p9.scale_color_manual(
             values=[
-                mpl.colors.to_hex(mpl.colormaps["viridis"](i / max(len(ks) - 1, 1) * 0.85))
+                mpl.colors.to_hex(
+                    mpl.colormaps["viridis"](i / max(len(ks) - 1, 1) * 0.85)
+                )
                 for i in range(len(ks))
             ],
             name="k",
