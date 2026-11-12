@@ -323,27 +323,23 @@ def _titled(
     return d.join(tops, on=[*by, "scheduler"]).join(titles, on=by)
 
 
-class _Strip(p9.labeller):
-    """Facet label: the title's first line · the other facet values, then the rest of
-    the title, so the top picks keep their own line."""
+class _FreeGrid(p9.facet_grid):
+    """facet_grid with its own x and y scale and axes on every panel, unlike
+    facet_grid's free scales, which only free them per column / row."""
 
-    def __call__(self, label_info):
-        title, *rest = label_info.variables.values()
-        head, nl, picks = title.partition("\n")
-        label_info.variables = {"title": " · ".join([head, *rest]) + nl + picks}
-        return label_info
+    def compute_layout(self, data):
+        layout = super().compute_layout(data)
+        panel = layout["PANEL"].astype(int)
+        layout["SCALE_X"] = panel if self.free["x"] else 1
+        layout["SCALE_Y"] = panel if self.free["y"] else 1
+        layout["AXIS_X"] = layout["AXIS_Y"] = True
+        return layout
 
 
-def _facets(scales: Literal["free", "free_x"]) -> p9.facet_wrap:
-    """One column per case, one row per resource."""
-    return p9.facet_wrap(
-        ["title", "resource"],
-        nrow=len(RESOURCES),
-        dir="v",
-        scales=scales,
-        # plotnine annotates `labeller` too narrowly, facet accepts any labeller
-        labeller=_Strip(),  # ty: ignore[invalid-argument-type]
-    )
+def _case_grid(scales: Literal["free", "free_x"]) -> p9.facet_grid:
+    """One column per case, titled with case and benchmarks; one row per resource,
+    labeled on the right; each panel with its own `scales`."""
+    return _FreeGrid("resource", "title", scales=scales)
 
 
 def _steps(d: pl.DataFrame, y: str, *, log: bool) -> p9.ggplot:
@@ -650,9 +646,15 @@ def solved_profile(
     # smallest budget of the last proof
     most = -pl.col("n").cast(pl.Int64)
     curves = _titled(curves, fin, _tops(ends, ["case", "resource"], most, "last"))
+    # the top k are picked per resource, but the column title can only list them if
+    # they agree across a case's resources
+    differ = curves.group_by("case").agg(pl.col("title").unique()).filter(
+        pl.col("title").list.len() > 1
+    )
+    assert differ.is_empty(), f"top k differ between resources:\n{differ}"
     return (
         _steps(curves, "y", log=log)
-        + _facets("free_x")
+        + _case_grid("free_x")
         + p9.coord_cartesian(ylim=(y_min, y_max))
         + p9.labs(
             x="",
@@ -710,7 +712,7 @@ def solved_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
     note = pl.format("fewer than {} proofs", pl.col("need"))
     return (
         _bars_noted(d, "gain", note, over=facet)
-        + _facets("free")
+        + _case_grid("free")
         + p9.labs(
             x=f"less budget than {BASELINE_NAME} [%]",
             title=f"Budget to prove as many benchmarks as {BASELINE_NAME}"
@@ -768,7 +770,7 @@ def cost_budget(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
     )
     return (
         _bars_noted(d, "gain", note, over=facet)
-        + _facets("free")
+        + _case_grid("free")
         + p9.labs(
             x=f"less budget than {BASELINE_NAME} [%]",
             title=f"Budget to reach {BASELINE_NAME}'s final cost",
@@ -838,7 +840,7 @@ def apply_rate(
     )
 
 
-def _grid(d: pl.DataFrame, by: list[str], log: bool, n: int = 300) -> pl.DataFrame:
+def _x_samples(d: pl.DataFrame, by: list[str], log: bool, n: int = 300) -> pl.DataFrame:
     """`n` evenly (or log-) spaced `x` per group of `by`."""
     lo, hi = pl.col("x").min(), pl.col("x").max()
     if log:
@@ -870,10 +872,11 @@ def quality(
     df = df.join(fin.select(*KEY, "best"), on=KEY)
     d = _per_resource(df.with_columns(rel=pl.col("cost") / pl.col("best")), "rel")
     by = ["case", "resource"]
-    curves = _titled(_geomean_curves(d, by, _grid(d, by, log)), fin)
+    # the top k are per case, so the column title can list them
+    curves = _titled(_geomean_curves(d, by, _x_samples(d, by, log)), fin)
     return (
         _steps(curves, "rel", log=log)
-        + _facets("free")
+        + _case_grid("free")
         + (p9.scale_y_log10() if log else p9.scale_y_continuous())
         + p9.labs(
             x="",
