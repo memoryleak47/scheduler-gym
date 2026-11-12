@@ -14,4 +14,14 @@ dependencies = [
 [dependency-groups]
 dev = [
     "ipykernel>=7.4.0",
+    "nbconvert>=7.17.2",
 ]
+
+[tool.ruff]
+extend-exclude = ["case-studies"]
+
+[tool.ruff.format]
+skip-magic-trailing-comma = true
+
+[tool.ruff.lint.isort]
+split-on-trailing-comma = false

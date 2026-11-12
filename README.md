@@ -33,3 +33,11 @@ Temperature and per-core frequency are logged to `benchdata/thermals-*.csv`.
 
 To create the figures, run `uv sync` and open the `figures.ipynb` notebook.
 Make sure to pick the right virtual env.
+
+To create them from the command line instead:
+
+```sh
+uv run jupyter nbconvert --to notebook --execute figures.ipynb --stdout > /dev/null
+```
+
+The PDFs go to `figures/`: `<name>.pdf` with title and subtitle, and `<name>-no-title.pdf` without, for use in a tex file.
