@@ -1,4 +1,4 @@
-// Ablation of source-cost-*: same match collection and application budget,
+// Ablation of lhs-cost-*: same match collection and application budget,
 // but matches are applied in a (seeded) random order instead of by inclusion cost.
 
 const RANDOM_SEED: u64 = 0x0012_3456_78AB_CDEF;

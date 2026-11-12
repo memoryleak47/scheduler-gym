@@ -16,11 +16,11 @@ FIGURES = ROOT / "figures"
 
 KEY = ("case", "scheduler", "benchmark")
 Resource = Literal["time", "size", "rewrites"]
-Side = Literal["backoff", "source", "outcome", "random", "other"]
+Side = Literal["backoff", "lhs", "rhs", "random", "other"]
 COLORS: dict[Side, str] = {
     "backoff": "black",
-    "source": "#E69F00",  # orange
-    "outcome": "#0072B2",  # blue
+    "lhs": "#E69F00",  # orange
+    "rhs": "#0072B2",  # blue
     "random": "#CC79A7",  # reddish purple
     "other": "#009E73",  # bluish green
 }  # Okabe-Ito colorblind-safe palette
@@ -31,11 +31,11 @@ SIDE_OF = (
     .then(pl.lit("backoff"))
     .when(_NAME.str.contains(r"^random-\d+$"))
     .then(pl.lit("random"))
-    .otherwise(_NAME.str.extract(r"^(source|outcome)-cost-\d+$"))
+    .otherwise(_NAME.str.extract(r"^(lhs|rhs)-cost-\d+$"))
     .cast(SIDE)
 )
 K_OF = _NAME.str.extract(r"-(\d+)$").cast(pl.Int64)
-COST_SIDE = pl.col("side").is_in(["source", "outcome", "random"])
+COST_SIDE = pl.col("side").is_in(["lhs", "rhs", "random"])
 # whether the goal is proved, or the cost reached 1
 PROVED = (pl.col("cost") <= 1) | pl.col("proved")
 # the scheduler the bar charts are relative to
@@ -53,7 +53,7 @@ ZOOM = 100
 MODE_GAP = 0.5
 # how the baseline is called in the plot texts
 BASELINE_NAME = "BackoffScheduler"
-MODES = "for each mode (source/outcome/random)"
+MODES = "for each mode (lhs/rhs/random)"
 
 
 def _bar_note(best: str) -> str:
@@ -401,7 +401,7 @@ def _positions(d: pl.DataFrame) -> tuple[pl.DataFrame, list[float], list[str]]:
     where = pl.DataFrame(
         {"scheduler": names, "pos": breaks}, {"scheduler": dtype, "pos": pl.Float64}
     )
-    # source-cost-400 -> source 400, random-400 -> random 400
+    # lhs-cost-400 -> lhs 400, random-400 -> random 400
     labels = [re.sub(r"(-cost)?-(\d+)$", r" \2", s) for s in names]
     return d.join(where, on="scheduler"), breaks, labels
 
@@ -657,7 +657,7 @@ def solved_profile(
             title="Fraction of problems proven within a time / e-graph size / rewrites budget"
             " in the proof case studies",
             subtitle=f"{BASELINE_NAME} and the k with the most proofs for each mode"
-            " (source/outcome/random,\nties go to the smaller budget at the last proof)"
+            " (lhs/rhs/random,\nties go to the smaller budget at the last proof)"
             " marked opaque;\nhigher is better",
         )
     )
