@@ -7,6 +7,7 @@ import matplotlib as mpl
 import plotnine as p9
 import polars as pl
 from matplotlib.path import Path as MplPath
+from mizani.breaks import breaks_log
 
 from bench import SCHEDULERS
 
@@ -55,7 +56,26 @@ MODE_GAP = 0.5
 BASELINE_NAME = "Backoff"
 # how the sides are called in the plot texts
 SHOWN = {"lhs": "LHS", "rhs": "RHS", "random": "Random"}
-MODES = "for each mode (LHS/RHS/Random)"
+Mode = Literal["lhs", "rhs", "random"]
+# the modes a figure shows by default
+ALL_MODES: tuple[Mode, ...] = ("lhs", "rhs", "random")
+
+
+def _modes(sides: Sequence[Mode] = ALL_MODES) -> str:
+    """The modes for the plot texts, e.g. "for each mode (LHS/RHS)"."""
+    return f"for each mode ({'/'.join(SHOWN[s] for s in sides)})"
+
+
+MODES = _modes()
+
+
+def _of_sides(schedulers: Sequence[str], sides: Sequence[Mode]) -> list[str]:
+    """`schedulers` of the modes `sides`, and backoff."""
+    if unknown := set(sides) - set(ALL_MODES):
+        raise ValueError(f"unknown sides: {sorted(unknown)}")
+    named = pl.DataFrame({"scheduler": schedulers}).with_columns(side=SIDE_OF)
+    keep = (pl.col("side") == "backoff") | pl.col("side").is_in(sides)
+    return named.filter(keep)["scheduler"].to_list()
 
 
 def _bar_note(best: str) -> str:
@@ -315,7 +335,8 @@ def _titled(
                 "{} ({} benchmarks)\n{}",
                 pl.col("case").first(),
                 pl.col("benchmarks").first(),
-                pick.filter(top)
+                pl.lit("Case best: ")
+                + pick.filter(top)
                 .sort_by(pl.col("side").filter(top), K_OF.filter(top))
                 .unique(maintain_order=True)
                 .str.join(", ")
@@ -348,7 +369,9 @@ def _case_grid(scales: Literal["free", "free_x"]) -> p9.facet_grid:
 
 def _steps(d: pl.DataFrame, y: str, *, log: bool) -> p9.ggplot:
     """Step lines per scheduler, top ones opaque; `log`: log x axis."""
-    top = d.filter(pl.col("top"))
+    is_base = pl.col("side") == BASELINE
+    top = d.filter(pl.col("top") & ~is_base)
+    base = d.filter(is_base)
     # legend with only the sides present
     breaks = [side for side in COLORS if side in d["side"]]
     return (
@@ -357,6 +380,9 @@ def _steps(d: pl.DataFrame, y: str, *, log: bool) -> p9.ggplot:
         # a white halo, so the top curves stand out where they cross the rest
         + p9.geom_step(data=top, size=2.4, color="white")
         + p9.geom_step(data=top, size=1.4)
+        # backoff last, so it is on top of all the others
+        + p9.geom_step(data=base, size=2.4, color="white")
+        + p9.geom_step(data=base, size=1.4)
         + (p9.scale_x_log10() if log else p9.scale_x_continuous())
         + p9.scale_color_manual(
             values=COLORS,
@@ -415,7 +441,20 @@ def _positions(d: pl.DataFrame) -> tuple[pl.DataFrame, list[float], list[str]]:
 def _bars(d: pl.DataFrame, value: str, *, over: Sequence[str] = ("case",)) -> p9.ggplot:
     """Bars of `value` per scheduler, cut at ±`ZOOM` with a // break.
     Backoff is left out, it is the line at 0. `over`: the columns of a facet."""
-    d, breaks, labels = _positions(d)
+    return _bars_at(*_positions(d), value, over=over)
+
+
+def _bars_at(
+    d: pl.DataFrame,
+    breaks: list[float],
+    labels: list[str],
+    value: str,
+    *,
+    over: Sequence[str] = ("case",),
+    bold: bool = True,
+) -> p9.ggplot:
+    """`_bars` of rows already at their y position `pos`, with the y `breaks` and
+    `labels`; `bold`: whether the tick labels of the top rows are bold."""
     gain = pl.col(value) >= 0
     # room for the labels past the bars, about a third of the case's range of bars
     span = pl.max_horizontal(pl.col("end").max(), 0) - pl.min_horizontal(
@@ -438,7 +477,7 @@ def _bars(d: pl.DataFrame, value: str, *, over: Sequence[str] = ("case",)) -> p9
     bar = p9.aes(yend="pos")
     label = p9.aes(x="end", label="text")
     top = p9.geom_segment(bar, data=d.filter(pl.col("top")), size=4)
-    top.params["bold_ticks"] = True
+    top.params["bold_ticks"] = bold
     return (
         _BarPlot(d, p9.aes(y="pos", x=0, xend="end", color="side"))
         + p9.geom_vline(xintercept=0, color=COLORS["backoff"], size=0.5)
@@ -547,6 +586,78 @@ def ranking(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
     )
 
 
+def best_ranking(
+    df: pl.DataFrame,
+    schedulers: Sequence[str],
+    sides: Sequence[Literal["lhs", "rhs"]] = ("lhs", "rhs"),
+) -> p9.ggplot:
+    """`ranking` of only the best k of each mode: the global best, with the lowest
+    geomean over the cases of each case's geomean of final cost / backoff's, and each
+    case's best. Ties go to the smallest k."""
+    _, fin = select(df, schedulers=_of_sides(schedulers, sides))
+    base = fin.filter(pl.col("scheduler") == BASELINE).select(
+        "case", "benchmark", base=pl.col("cost")
+    )
+    ratios = (
+        fin.join(base, on=["case", "benchmark"])
+        .group_by("case", "scheduler")
+        .agg(ratio=_geomean(pl.col("cost") / pl.col("base")))
+        .with_columns(gain=(1 - pl.col("ratio")) * 100)
+    )
+    every = ratios.group_by("scheduler").agg(
+        cases=pl.len(), ratio=_geomean(pl.col("ratio"))
+    )
+    cases = ratios["case"].n_unique()
+    if missing := every.filter(pl.col("cases") < cases)["scheduler"].to_list():
+        raise ValueError(f"schedulers not in all {cases} cases: {missing}")
+    best = _tops(every, [], "ratio").filter(pl.col("top") & COST_SIDE)
+    # the case's best picks in the facet title, like the other figures
+    d = _titled(ratios, fin, _tops(ratios, ["case"], "ratio"))
+    rows = pl.concat(
+        [
+            d.join(best.select("scheduler"), on="scheduler").with_columns(
+                row=pl.lit("global"), top=pl.lit(True)
+            ),
+            d.filter(pl.col("top") & COST_SIDE).with_columns(row=pl.lit("case")),
+        ]
+    )
+    # per mode the global best above the case's best, `MODE_GAP` between the modes
+    order = [(side, row) for side in sides for row in ("global", "case")]
+    k = dict(best.select("side", K_OF).iter_rows())
+    labels = [
+        f"{SHOWN[side]} (global best)"
+        if row == "global"
+        else f"{SHOWN[side]} (case best)"
+        for side, row in order
+    ]
+    # first row on top
+    breaks = [-(i + (i // 2) * MODE_GAP) for i in range(len(order))]
+    where = pl.DataFrame(
+        {
+            "side": [side for side, _ in order],
+            "row": [row for _, row in order],
+            "pos": breaks,
+        },
+        schema_overrides={"side": SIDE},
+    )
+    rows = rows.join(where, on=["side", "row"])
+    global_k = ", ".join(f"{SHOWN[s]} {k[s]}" for s in sides)
+    return (
+        _bars_at(rows, breaks[::-1], labels[::-1], "gain", bold=False)
+        # one x scale for all case studies, so their gains are comparable
+        + p9.facet_wrap("title", nrow=1, scales="free_y")
+        + p9.labs(
+            x=f"Cost reduction vs. {BASELINE_NAME}",
+            title=f"Final cost of the best k relative to {BASELINE_NAME}",
+            subtitle=f"1 − geomean over benchmarks of final cost / {BASELINE_NAME}'s final"
+            f" cost; higher is better;\nglobal best: lowest geomean over"
+            f" the case studies, case best: lowest in the case study,\n{_modes(sides)};"
+            f" // marks bar cut off; the line at 0 is {BASELINE_NAME};"
+            f"\nGlobal best: {global_k}",
+        )
+    )
+
+
 def solved(df: pl.DataFrame, schedulers: Sequence[str]) -> p9.ggplot:
     """Change in benchmarks that proved the goal, relative to backoff in percent."""
     _, fin = select(df, schedulers=schedulers)
@@ -605,6 +716,24 @@ def _first_proofs(d: pl.DataFrame, proved: pl.Expr) -> pl.DataFrame:
     )
 
 
+def _cut_x(curves: pl.DataFrame, group: list[str], frac: float) -> pl.DataFrame:
+    """Step curves cut at `frac` of each case's and resource's largest `x`; those
+    that go on past the cut are extended to it at their last `y` before it."""
+    curves = curves.with_columns(
+        pl.col("x").cast(pl.Float64),
+        cut=pl.col("x").max().over("case", "resource") * frac,
+    ).with_columns(past=(pl.col("x") > pl.col("cut")).any().over(group))
+    kept = curves.filter(pl.col("x") <= pl.col("cut")).drop("past")
+    edge = (
+        kept.join(curves.filter("past").select(group).unique(), on=group)
+        .group_by(group, maintain_order=True)
+        .agg(pl.all().last())
+        .with_columns(x=pl.col("cut"))
+        .select(kept.columns)
+    )
+    return pl.concat([kept, edge]).sort("x", maintain_order=True).drop("cut")
+
+
 def solved_profile(
     df: pl.DataFrame,
     schedulers: Sequence[str],
@@ -612,10 +741,15 @@ def solved_profile(
     y_min: float = 0,
     y_max: float = 1,
     log: bool = False,
+    sides: Sequence[Mode] = ALL_MODES,
+    x_frac: float = 1,
 ) -> p9.ggplot:
     """Fraction of benchmarks that proved the goal within a resource budget.
-    `y_min`, `y_max`: ends of the y axis, to zoom in on a range; `log`: log x axis."""
-    df, fin = select(df, schedulers=schedulers)
+    `y_min`, `y_max`: ends of the y axis, to zoom in on a range; `log`: log x axis;
+    `sides`: the modes to show, besides backoff; `x_frac`: show only the first
+    fraction of each panel's x axis, e.g. 0.5 for 0 to half the largest budget."""
+    assert 0 < x_frac <= 1, f"x_frac must be in (0, 1], got {x_frac}"
+    df, fin = select(df, schedulers=_of_sides(schedulers, sides))
     group = ["case", "resource", "scheduler"]
     d = _per_resource(df, "cost", "proved")
     benchmarks = fin.group_by("case", "scheduler").agg(benchmarks=pl.len())
@@ -661,6 +795,8 @@ def solved_profile(
         .filter(pl.col("title").list.len() > 1)
     )
     assert differ.is_empty(), f"top k differ between resources:\n{differ}"
+    if x_frac < 1:
+        curves = _cut_x(curves, group, x_frac)
     return (
         _steps(curves, "y", log=log)
         + _case_grid("free_x")
@@ -670,8 +806,8 @@ def solved_profile(
             y="Benchmarks with a proof",
             title="Fraction of problems proven within a time / e-graph size / rewrites budget"
             " in the proof case studies",
-            subtitle=f"{BASELINE_NAME} and the k with the most proofs for each mode"
-            " (LHS/RHS/Random,\nties go to the smaller budget at the last proof)"
+            subtitle=f"{BASELINE_NAME} and the k with the most proofs"
+            f" {_modes(sides)[:-1]},\nties go to the smaller budget at the last proof)"
             " marked opaque;\nhigher is better",
         )
     )
@@ -797,11 +933,13 @@ def apply_rate(
     *,
     ks: Sequence[int] | None = None,
     log: bool = False,
+    extra_breaks: Sequence[float] = (),
 ) -> p9.ggplot:
     """Fraction of the available matches applied per iteration, geomean over the
     benchmarks still running; one row per mode, one column per case, one curve per k.
     Backoff applies all it gets, so it is left out, and so are iterations without matches.
-    `ks`: the k to show, all of `schedulers`' by default; `log`: log x axis."""
+    `ks`: the k to show, all of `schedulers`' by default; `log`: log x axis;
+    `extra_breaks`: y ticks (as fractions, 0.1 is 10%) on top of the default ones."""
     if ks is not None:
         named = pl.DataFrame({"scheduler": schedulers}).with_columns(k=K_OF)
         if missing := set(ks) - set(named["k"]):
@@ -835,7 +973,15 @@ def apply_rate(
         + p9.geom_step(size=0.8)
         + p9.facet_grid("side", "title", scales="free_x")
         + (p9.scale_x_log10() if log else p9.scale_x_continuous())
-        + p9.scale_y_log10(labels=lambda ys: [f"{y * 100:g}%" for y in ys])
+        + p9.scale_y_log10(
+            breaks=lambda lims: sorted(
+                {
+                    *breaks_log()(lims),
+                    *(b for b in extra_breaks if lims[0] <= b <= lims[1]),
+                }
+            ),
+            labels=lambda ys: [f"{y * 100:g}%" for y in ys],
+        )
         # sequential, as k is a magnitude; without viridis' yellow end, too light on white
         + p9.scale_color_manual(
             values=[
@@ -880,11 +1026,15 @@ def _geomean_curves(d: pl.DataFrame, by: list[str], grid: pl.DataFrame) -> pl.Da
 
 
 def quality(
-    df: pl.DataFrame, schedulers: Sequence[str], *, log: bool = False
+    df: pl.DataFrame,
+    schedulers: Sequence[str],
+    *,
+    log: bool = False,
+    sides: Sequence[Mode] = ALL_MODES,
 ) -> p9.ggplot:
     """Cost relative to the benchmark's best final cost over resource, geomean over benchmarks.
-    `log`: log x and y axes."""
-    df, fin = select(df, schedulers=schedulers)
+    `log`: log x and y axes; `sides`: the modes to show, besides backoff."""
+    df, fin = select(df, schedulers=_of_sides(schedulers, sides))
     df = df.join(fin.select(*KEY, "best"), on=KEY)
     d = _per_resource(df.with_columns(rel=pl.col("cost") / pl.col("best")), "rel")
     by = ["case", "resource"]
@@ -901,6 +1051,6 @@ def quality(
             subtitle="cost relative to the best final cost of each benchmark,"
             " geometric mean over benchmarks;\n"
             f"{BASELINE_NAME} and the k with the lowest final cost per case study"
-            f" {MODES} marked opaque;\nlower is better",
+            f" {_modes(sides)} marked opaque;\nlower is better",
         )
     )
